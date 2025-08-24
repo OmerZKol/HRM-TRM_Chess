@@ -1,0 +1,161 @@
+"""
+Chess puzzle dataset for HRM move prediction training.
+Extends the base PuzzleDataset to handle move targets.
+"""
+
+import os
+import json
+import numpy as np
+import pydantic
+import torch
+from torch.utils.data import IterableDataset, get_worker_info
+
+from models.losses import IGNORE_LABEL_ID
+from dataset.common import PuzzleDatasetMetadata
+from puzzle_dataset import PuzzleDataset, PuzzleDatasetConfig, _sample_batch, _sample_batch_simple
+
+
+class ChessPuzzleDatasetConfig(PuzzleDatasetConfig):
+    """Extended config for chess move prediction."""
+    pass
+
+
+class ChessPuzzleDataset(PuzzleDataset):
+    """Chess dataset with move prediction targets."""
+    
+    def __init__(self, config: ChessPuzzleDatasetConfig, split: str = "train"):
+        super().__init__(config, split)
+    
+    def _lazy_load_dataset(self):
+        if self._data is not None:
+            return
+
+        field_mmap_modes = {
+            "inputs": "r",
+            "labels": "r",
+            "move_targets": "r",  # NEW: Move prediction targets
+
+            # Keep indices in memory
+            "puzzle_identifiers": None,
+            "puzzle_indices": None,
+            "group_indices": None
+        }
+
+        # Load data
+        self._data = {}
+        for set_name in self.metadata.sets:
+            # Load subset
+            self._data[set_name] = {
+                field_name: np.load(os.path.join(self.config.dataset_path, self.split, f"{set_name}__{field_name}.npy"), mmap_mode=mmap_mode)
+                for field_name, mmap_mode in field_mmap_modes.items()
+            }
+
+    def _collate_batch(self, batch):
+        # Convert dtype
+        batch = {k: v.astype(np.int32) for k, v in batch.items()}
+
+        # Convert ignore label IDs
+        if self.metadata.ignore_label_id is not None:
+            batch["labels"][batch["labels"] == self.metadata.ignore_label_id] = IGNORE_LABEL_ID
+            # Handle move targets ignore IDs too
+            if "move_targets" in batch:
+                batch["move_targets"][batch["move_targets"] == self.metadata.ignore_label_id] = IGNORE_LABEL_ID
+
+        # Pad
+        if batch["puzzle_identifiers"].size < self.local_batch_size:
+            pad_size = self.local_batch_size - batch["puzzle_identifiers"].size
+
+            pad_values = {
+                "inputs": self.metadata.pad_id,
+                "labels": IGNORE_LABEL_ID,
+                "move_targets": IGNORE_LABEL_ID,  # NEW: Pad move targets too
+                "puzzle_identifiers": self.metadata.blank_identifier_id
+            }
+            batch = {k: np.pad(v, ((0, pad_size), ) + ((0, 0), ) * (v.ndim - 1), constant_values=pad_values.get(k, 0)) for k, v in batch.items()}
+
+        # To tensor
+        return {k: torch.from_numpy(v) for k, v in batch.items()}
+    
+    def _iter_test(self):
+        for set_name, dataset in self._data.items():  # type: ignore
+            total_examples = len(dataset["inputs"])
+
+            # Load examples one by one
+            start_index = 0
+            while start_index < total_examples:
+                # Compute indices
+                end_index = min(total_examples, start_index + self.config.global_batch_size)
+                
+                local_start = start_index + self.config.rank * self.local_batch_size
+                local_end   = min(start_index + (self.config.rank + 1) * self.local_batch_size, end_index)
+                
+                # Get batch of examples, and also puzzle IDs
+                puzzle_indices = []
+                puzzle_index = np.searchsorted(dataset["puzzle_indices"], local_start, side="right") - 1
+                for i in range(local_start, local_end):
+                    while puzzle_index + 1 < len(dataset["puzzle_indices"]) and i >= dataset["puzzle_indices"][puzzle_index + 1]:
+                        puzzle_index += 1
+
+                    puzzle_indices.append(puzzle_index)
+                
+                batch_data = {
+                    "inputs": dataset["inputs"][local_start: local_end],
+                    "labels": dataset["labels"][local_start: local_end],
+                    "puzzle_identifiers": dataset["puzzle_identifiers"][puzzle_indices]
+                }
+                
+                # Add move targets if available
+                if "move_targets" in dataset:
+                    batch_data["move_targets"] = dataset["move_targets"][local_start: local_end]
+                
+                batch = self._collate_batch(batch_data)
+
+                yield set_name, batch, end_index - start_index
+                
+                # Advance to next batch
+                start_index += self.config.global_batch_size
+
+    def _iter_train(self):
+        for set_name, dataset in self._data.items():  # type: ignore
+            # Increase epoch count
+            self._iters += 1
+
+            # Simple puzzle sampling without groups
+            rng = np.random.Generator(np.random.Philox(seed=self.config.seed + self._iters))
+            
+            # Calculate how many puzzles we have (puzzle_indices length - 1)
+            num_puzzles = len(dataset["puzzle_indices"]) - 1
+            
+            # Generate multiple batches for this epoch
+            num_batches = self.config.epochs_per_iter * 1000  # Roughly estimate batches per epoch
+            
+            for batch_idx in range(num_batches):
+                batch_indices, batch_puzzle_indices = _sample_batch_simple(
+                    rng,
+                    puzzle_indices=dataset["puzzle_indices"],
+                    global_batch_size=self.config.global_batch_size,
+                    num_puzzles=num_puzzles
+                )
+                
+                # Select current rank and collate
+                global_effective_batch_size = batch_puzzle_indices.size  # Global effective batch size, excluding pads
+                
+                # Drop last batch if too small
+                if global_effective_batch_size < self.config.global_batch_size:
+                    continue
+
+                batch_indices        = batch_indices       [self.config.rank * self.local_batch_size: (self.config.rank + 1) * self.local_batch_size]
+                batch_puzzle_indices = batch_puzzle_indices[self.config.rank * self.local_batch_size: (self.config.rank + 1) * self.local_batch_size]
+                
+                batch_data = {
+                    "inputs": dataset["inputs"][batch_indices],
+                    "labels": dataset["labels"][batch_indices],
+                    "puzzle_identifiers": dataset["puzzle_identifiers"][batch_puzzle_indices]
+                }
+                
+                # Add move targets if available
+                if "move_targets" in dataset:
+                    batch_data["move_targets"] = dataset["move_targets"][batch_indices]
+                batch = self._collate_batch(batch_data)
+
+                yield set_name, batch, global_effective_batch_size

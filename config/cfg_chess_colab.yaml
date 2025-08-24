@@ -1,0 +1,35 @@
+# Configuration optimized for Google Colab training
+defaults:
+  - _self_
+
+# Data
+data_path: "data/chess-move-prediction"
+
+# Training - Optimized for Colab time/memory limits
+epochs: 8  # Reduced for time limits
+global_batch_size: 32  # Conservative for T4 GPU
+lr: 1e-4
+weight_decay: 0.1
+warmup_steps: 300  # Reduced
+max_grad_norm: 1.0
+
+# Model - Slightly reduced for memory efficiency
+puzzle_emb_lr: null
+puzzle_emb_weight_decay: null
+
+# Evaluation - More frequent for monitoring
+eval_interval: 50  # More frequent
+save_interval: 200  # More frequent checkpointing
+
+# Logging
+project_name: "hrm-chess-colab"
+run_name: null
+
+# System - Optimized for Colab
+device: "cuda"
+compile: false  # Disable for compatibility
+mixed_precision: true  # Essential for memory efficiency
+
+# Distributed training
+rank: 0
+world_size: 1
