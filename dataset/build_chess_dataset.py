@@ -201,7 +201,7 @@ def build_chess_dataset(
     train_data_by_group = {i: {"inputs": [], "targets": [], "move_targets": [], "puzzle_ids": []} for i in range(num_groups)}
     test_data_by_group = {i: {"inputs": [], "targets": [], "move_targets": [], "puzzle_ids": []} for i in range(num_groups)}
     
-    position_history_len = 10  # Number of recent moves to include
+    position_history_len = 100  # Number of recent moves to include
     vocab_size = encoder.max_moves + 100  # Buffer for special tokens
     
     print(f"Processing chess games from {csv_path}...")
