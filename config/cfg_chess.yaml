@@ -16,8 +16,8 @@ puzzle_emb_lr: 5e-5
 puzzle_emb_weight_decay: 0.1
 
 # Evaluation and saving
-eval_interval: 500
-save_interval: 2000
+eval_interval: 5000
+save_interval: 20000
 
 # Logging
 project_name: "hrm-chess-move-prediction"

@@ -126,8 +126,10 @@ class ChessPuzzleDataset(PuzzleDataset):
             # Calculate how many puzzles we have (puzzle_indices length - 1)
             num_puzzles = len(dataset["puzzle_indices"]) - 1
             
-            # Generate multiple batches for this epoch
-            num_batches = self.config.epochs_per_iter * 1000  # Roughly estimate batches per epoch
+            # Calculate actual number of batches based on dataset size
+            total_examples = len(dataset["inputs"])
+            num_batches = (total_examples + self.config.global_batch_size - 1) // self.config.global_batch_size
+            num_batches = num_batches * self.config.epochs_per_iter
             
             for batch_idx in range(num_batches):
                 batch_indices, batch_puzzle_indices = _sample_batch_simple(

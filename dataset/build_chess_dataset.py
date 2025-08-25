@@ -201,7 +201,7 @@ def build_chess_dataset(
     train_data_by_group = {i: {"inputs": [], "targets": [], "move_targets": [], "puzzle_ids": []} for i in range(num_groups)}
     test_data_by_group = {i: {"inputs": [], "targets": [], "move_targets": [], "puzzle_ids": []} for i in range(num_groups)}
     
-    position_history_len = 100  # Number of recent moves to include
+    position_history_len = 150  # Number of recent moves to include
     vocab_size = encoder.max_moves + 100  # Buffer for special tokens
     
     print(f"Processing chess games from {csv_path}...")
@@ -326,15 +326,15 @@ def build_chess_dataset(
                 
                 # New puzzle started
                 if puzzle_id != current_puzzle:
-                    if current_puzzle != -1:
-                        current_puzzle_id += 1
+                    # if current_puzzle != -1:
+                    #     current_puzzle_id += 1
                     current_puzzle = puzzle_id
                     puzzle_indices.append(len(all_inputs))
                 
                 all_inputs.append(group_data["inputs"][idx])
                 all_labels.append(group_data["targets"][idx])
                 all_move_targets.append(group_data["move_targets"][idx])
-                all_puzzle_identifiers.append(current_puzzle_id)
+                all_puzzle_identifiers.append(0)
             
             # Update group boundary
             group_indices.append(current_puzzle_id + 1)
@@ -367,9 +367,9 @@ def build_chess_dataset(
         
         # HRM-required metadata fields
         "pad_id": 0,
-        "ignore_label_id": -100,
-        "blank_identifier_id": 999,
-        "num_puzzle_identifiers": 1000,
+        "ignore_label_id": 0,
+        "blank_identifier_id": 0,
+        "num_puzzle_identifiers": 1,
         "total_groups": num_groups,  # Multiple groups for curriculum learning
         "mean_puzzle_examples": valid_positions / max(game_count, 1),
         "sets": ["all"],  # Single dataset set
@@ -387,11 +387,11 @@ def build_chess_dataset(
         split_info = {
             # HRM-required fields
             "pad_id": 0,
-            "ignore_label_id": -100,
-            "blank_identifier_id": 999,
+            "ignore_label_id": 0,
+            "blank_identifier_id": 0,
             "vocab_size": vocab_size,
             "seq_len": position_history_len,
-            "num_puzzle_identifiers": 1000,
+            "num_puzzle_identifiers": 1,
             "total_groups": num_groups,
             "mean_puzzle_examples": size / max(game_count, 1),
             "sets": ["all"],
@@ -418,9 +418,9 @@ if __name__ == "__main__":
                        help="Path to chess games CSV")
     parser.add_argument("--output-dir", default="data/chess-move-prediction", 
                        help="Output directory")
-    parser.add_argument("--max-games", type=int, default=100000,
+    parser.add_argument("--max-games", type=int, default=6000,
                        help="Maximum number of games to process")
-    parser.add_argument("--min-elo", type=int, default=2200,
+    parser.add_argument("--min-elo", type=int, default=2700,
                        help="Minimum ELO rating")
     parser.add_argument("--max-moves-per-game", type=int, default=150,
                        help="Maximum moves per game to use")

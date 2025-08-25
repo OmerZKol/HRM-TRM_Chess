@@ -44,8 +44,9 @@ class ChessTrainingConfig:
     puzzle_emb_weight_decay: Optional[float] = None
     
     # Evaluation
-    eval_interval: int = 500
-    save_interval: int = 2000
+    print_interval: int = 100
+    eval_interval: int = 3000
+    save_interval: int = 10000
     
     # Logging
     project_name: str = "hrm-chess"
@@ -103,7 +104,7 @@ class ChessTrainer:
             "batch_size": self.config.global_batch_size,
             "seq_len": self.dataset_info["seq_len"],
             "vocab_size": self.dataset_info["vocab_size"],
-            "num_puzzle_identifiers": 1000,  # Group games by puzzle ID
+            "num_puzzle_identifiers": 1,  # Group games by puzzle ID
             
             # Architecture
             "H_cycles": 3,
@@ -311,7 +312,6 @@ class ChessTrainer:
         total_loss = 0.0
         total_samples = 0
         total_metrics = {}
-        
         for set_name, batch, batch_size in self.val_loader:
             batch = {k: v.to(self.device, non_blocking=True) for k, v in batch.items()}
             
@@ -333,7 +333,10 @@ class ChessTrainer:
                 if torch.is_tensor(v):
                     v = v.item()
                 total_metrics[k] = total_metrics.get(k, 0.0) + v
-        
+
+            if total_samples >= 500:
+                break
+
         # Average metrics
         eval_metrics = {
             "eval_loss": total_loss / total_samples if total_samples > 0 else 0.0,
@@ -371,7 +374,7 @@ class ChessTrainer:
                 metrics = self.train_step(batch)
                 # Log metrics
                 if self.config.rank == 0:
-                    if self.step % 100 == 0:
+                    if self.step % self.config.print_interval == 0:
                         print(f"Step {self.step}: Loss={metrics['loss']:.4f}, "
                               f"Move Acc={metrics.get('move_accuracy', 0)}/{metrics.get('move_count', 1)} "
                               f"({100*metrics.get('move_accuracy', 0)/max(metrics.get('move_count', 1), 1):.1f}%)")
@@ -379,22 +382,18 @@ class ChessTrainer:
                     if self.use_wandb and self.step % 10 == 0:
                         wandb.log(metrics, step=self.step)
                 
-                # Evaluation
-                if self.step % self.config.eval_interval == 0:
-                    eval_metrics = self.evaluate()
-                    if self.config.rank == 0:
-                        print(f"Evaluation at step {self.step}: {eval_metrics}")
-                        if self.use_wandb:
-                            wandb.log(eval_metrics, step=self.step)
-                
-                # Save checkpoint
-                if self.step % self.config.save_interval == 0 and self.config.rank == 0:
-                    checkpoint_path = f"{self.checkpoint_path}checkpoint_step_{self.step}.pt"
-                    self.save_checkpoint(checkpoint_path)
-                
-                # Early stopping if needed
-                if self.step >= self.config.epochs * 1000:  # Rough estimate
-                    break
+            # Evaluation at the end of the epoch
+            # if self.step % self.config.eval_interval == 0:
+            eval_metrics = self.evaluate()
+            if self.config.rank == 0:
+                print(f"Evaluation at step {self.step}: {eval_metrics}")
+                if self.use_wandb:
+                    wandb.log(eval_metrics, step=self.step)
+            
+            # Save checkpoint at the end of the epoch
+            # if self.step % self.config.save_interval == 0 and self.config.rank == 0:
+            checkpoint_path = f"{self.checkpoint_path}checkpoint_epoch_{epoch}.pt"
+            self.save_checkpoint(checkpoint_path)
             
             epoch_time = time.time() - epoch_start_time
             print(f"Epoch {epoch} completed in {epoch_time:.2f}s")
@@ -413,7 +412,7 @@ def main(cfg: DictConfig) -> None:
     torch.set_default_device('cuda')
     # Convert to training config
     config = ChessTrainingConfig(**cfg)
-    
+
     # Initialize trainer
     trainer = ChessTrainer(config)
     
