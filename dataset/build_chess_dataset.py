@@ -13,6 +13,7 @@ import torch
 from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass
 from tqdm import tqdm
+import chess
 
 # Simple chess move encoding without external dependencies
 SQUARES = [f"{file}{rank}" for rank in "12345678" for file in "abcdefgh"]
@@ -38,60 +39,135 @@ class ChessMoveEncoder:
     """Encodes chess moves as integers for HRM training."""
     
     def __init__(self):
-        # Move encoding: from_square (64) * to_square (64) * promotion_piece (5: none, Q, R, B, N)
-        self.max_moves = 64 * 64 * 5  # 20,480 possible moves
-        self.promotion_pieces = ["", "q", "r", "b", "n"]
+        # Move encoding: from_square (64) * to_square (64) + 64 * 4 (promotion) 
+        # REPRESENTING PROMOTION SEPARATE TO REGULAR MOVES
+        self.max_moves = 64 * 64 + 64 * 4  # 4352 possible moves
+        # REGULAR_MOVES = list(range(0, 4096)) # 64*64
+        # QUEEN_PROMOTIONS = list(range(4096, 4096 + 64))
+        # ROOK_PROMOTIONS = list(range(4096 + 64, 4096 + 128))  
+        # BISHOP_PROMOTIONS = list(range(4096 + 128, 4096 + 192))
+        # KNIGHT_PROMOTIONS = list(range(4096 + 192, 4096 + 256))
+        self.promotion_pieces = ["q", "r", "b", "n"]
     
-    def encode_move(self, move_str: str) -> int:
-        """Encode a move string (e.g., 'e2e4', 'e7e8q') to integer."""
-        move_str = move_str.lower().strip()
+    def encode_promotion_move(self, from_square, to_square, promotion_piece):
+        # Verify it's a valid promotion square
+        if not (to_square < 8 or to_square >= 56):
+            raise ValueError(f"Invalid promotion square: {to_square}")
         
-        # Handle castling
-        if move_str in ["o-o", "o-o-o", "0-0", "0-0-0"]:
-            # Simplified: treat as king moves
-            if move_str in ["o-o", "0-0"]:
-                return self.encode_move("e1g1")  # White short castling
-            else:
-                return self.encode_move("e1c1")  # White long castling
+        # each 'from square' has 3 'potential' 'to square' squares
+        # Direct mapping for the 16 promotion squares
+        if to_square < 8:  # Rank 1
+            base_offset = to_square
+        else:  # Rank 8
+            base_offset = to_square - 56 + 8
         
-        # Extract from/to squares
-        if len(move_str) < 4:
-            return 0  # Invalid move
+        if from_square < 16: # rank 2
+            from_offset = from_square - 8
+        else:   # rank 7
+            from_offset = from_square - 48 + 8
+
+        relative_to_offset = from_offset - base_offset + 1
+        # base_offset is now in the range [0, 15]
+        if promotion_piece == chess.QUEEN:
+            return 4096 + from_offset * 3 + relative_to_offset # 4096-4144
+        if promotion_piece == chess.ROOK:
+            from_offset += 16*3
+            return 4096 + from_offset * 3 + relative_to_offset # 4144-4192
+        elif promotion_piece == chess.BISHOP:
+            from_offset += 16*3
+            return 4096 + from_offset * 3 + relative_to_offset # 4192-4240
+        elif promotion_piece == chess.KNIGHT:
+            from_offset += 16*3
+            return 4096 + from_offset * 3 + relative_to_offset # 4240-4288
+
+    def encode_move(self, board, move):
+        """Convert a chess move object to a move index for the model."""
+        #convert to from - to move indexes
+        from_square = move.from_square
+        to_square = move.to_square
+
+        #Handlge promotion
+        if (move.promotion):
+            promotion_piece = move.promotion
+            return self.encode_promotion_move(from_square, to_square, promotion_piece)
+        else:
+            return from_square * 64 + to_square
         
-        from_square = move_str[:2]
-        to_square = move_str[2:4]
-        promotion = move_str[4:5] if len(move_str) > 4 else ""
-        
-        if from_square not in SQUARE_TO_IDX or to_square not in SQUARE_TO_IDX:
-            return 0  # Invalid squares
-        
-        from_idx = SQUARE_TO_IDX[from_square]
-        to_idx = SQUARE_TO_IDX[to_square]
-        promo_idx = self.promotion_pieces.index(promotion) if promotion in self.promotion_pieces else 0
-        
-        # Encode as: from * 64 * 5 + to * 5 + promotion
-        move_id = from_idx * 64 * 5 + to_idx * 5 + promo_idx
-        return min(move_id, self.max_moves - 1)
-    
     def decode_move(self, move_id: int) -> str:
-        """Decode integer back to move string."""
-        if move_id >= self.max_moves:
-            return "invalid"
+        """Decode integer back to move string (UCI format)."""
+        if move_id < 0 or move_id >= self.max_moves:
+            raise ValueError(f"Invalid move ID: {move_id}")
         
-        promo_idx = move_id % 5
-        move_id //= 5
-        to_idx = move_id % 64
-        from_idx = move_id // 64
+        # Regular moves (0-4095): from_square * 64 + to_square
+        if move_id < 4096:
+            from_square = move_id // 64
+            to_square = move_id % 64
+            
+            from_str = chess.square_name(from_square)
+            to_str = chess.square_name(to_square)
+
+            return f"{from_str}{to_str}"
+
+        return self.decode_promotion(move_id)
+
+    def decode_promotion(self, move_id):
+        # Promotion moves (4096-4288)
+        promotion_offset = move_id - 4096
         
-        from_square = IDX_TO_SQUARE.get(from_idx, "a1")
-        to_square = IDX_TO_SQUARE.get(to_idx, "a1")
-        promotion = self.promotion_pieces[promo_idx]
+        # Determine piece type based on offset ranges
+        if promotion_offset < 16*3:  # 0-47: Queen promotions
+            base_offset = promotion_offset
+            piece_type = 0
+        elif promotion_offset < 16*6:  # 48-95: Rook promotions  
+            base_offset = promotion_offset - 16*3
+            piece_type = 1
+        elif promotion_offset < 16*9:  # 96-143: Bishop promotions
+            base_offset = promotion_offset - 16*6
+            piece_type = 2
+        elif promotion_offset < 16*12:  # 144-191: Knight promotions
+            base_offset = promotion_offset - 16*9
+            piece_type = 3
+        else:
+            raise ValueError(f"Invalid promotion move ID: {move_id}")
         
-        return from_square + to_square + promotion
+        # Extract from_offset and relative_to_offset from base_offset
+        from_offset = base_offset // 3
+        relative_to_offset = base_offset % 3
+                
+        # Convert from_offset back to actual from_square
+        if from_offset < 8:  # Rank 2
+            from_square = from_offset + 8  # a2-h2 gives 8-16 range
+            # Calculate to_square on rank 1
+            base_to_offset = from_offset  # Corresponding square on rank 1
+            to_square = base_to_offset + (relative_to_offset - 1)  # Adjust for relative offset
+            # Ensure to_square is valid (0-7 for rank 1)
+            if to_square < 0:
+                to_square = 0
+            elif to_square > 7:
+                to_square = 7
+        else:  # Rank 7
+            from_square = (from_offset - 8) + 48  # a7-h7 gives 48-56 range
+            # Calculate to_square on rank 8
+            base_to_offset = (from_offset - 8) + 56  # Corresponding square on rank 8
+            to_square = base_to_offset + (relative_to_offset - 1)  # Adjust for relative offset
+            # Ensure to_square is valid (56-63 for rank 8)
+            if to_square < 56:
+                to_square = 56
+            elif to_square > 63:
+                to_square = 63
+        
+        from_str = chess.square_name(from_square)
+        to_str = chess.square_name(to_square)
+        
+        # Map piece type to promotion character
+        promotion_chars = ['q', 'r', 'b', 'n']
+        promotion_char = promotion_chars[piece_type]
+        
+        return f"{from_str}{to_str}{promotion_char}"
 
 
 class SimplePGNParser:
-    """Simple PGN parser without external chess library."""
+    """Simple PGN parser"""
     
     def __init__(self):
         self.move_encoder = ChessMoveEncoder()
@@ -106,56 +182,91 @@ class SimplePGNParser:
         # Extract moves (remove move numbers and result)
         moves = []
         tokens = pgn_clean.split()
-        
         for token in tokens:
             # Skip move numbers, results, and empty tokens
             if not token or token.endswith('.') or token in ['1-0', '0-1', '1/2-1/2', '*']:
                 continue
-            
-            # Convert algebraic notation to UCI-like format (simplified)
-            move = self._algebraic_to_uci(token)
-            if move:
-                moves.append(move)
-        
+            if token:
+                moves.append(token)
         return moves
-    
-    def _algebraic_to_uci(self, algebraic: str) -> Optional[str]:
-        """Convert algebraic notation to UCI-like format (very simplified)."""
-        algebraic = algebraic.strip()
-        
-        # Handle castling
-        if algebraic in ['O-O', '0-0']:
-            return 'e1g1'  # Simplified: assume white castling
-        if algebraic in ['O-O-O', '0-0-0']:
-            return 'e1c1'  # Simplified: assume white long castling
-        
-        # For simplicity, this is a very basic conversion
-        # In production, you'd need a full chess engine
-        # For now, we'll extract square names when possible
-        squares = re.findall(r'[a-h][1-8]', algebraic)
-        if len(squares) >= 2:
-            return squares[-2] + squares[-1]  # Last two squares found
-        elif len(squares) == 1:
-            # Pawn move or ambiguous - simplified handling
-            return squares[0] + squares[0]  # Placeholder
-        
-        return None
 
+    def convert_moves_and_boards(self, moves):
+        """Convert a sequence of moves to a list of board states and 
+        also returns a list of move objects"""
+        board = chess.Board()
+        boards = [board.copy()]
+        converted_moves = []
+        for move in moves:
+            move_object = board.parse_san(move)  # Convert SAN to move object
+            converted_moves.append(move_object)
+            board.push(move_object)
+            boards.append(board.copy())
+        return boards, converted_moves
 
-def create_position_encoding(moves: List[str], max_history: int = 10) -> List[int]:
-    """Create a simple position encoding from move history."""
-    encoder = ChessMoveEncoder()
+# def create_rep_layer(board, piece):
+#     s = str(board)
+#     s = re.sub(f'[^{piece}{piece.upper()} \n]', '.', s)
+#     s = re.sub(f'{piece}', '-1', s)
+#     s = re.sub(f'{piece.upper()}', '1', s)
+#     s = re.sub('\.', '0', s)
+
+#     board_mat = []
+#     for row in s.split('\n'):
+#         row = row.split(' ')
+#         row = [int(x) for x in row]
+#         board_mat.append(row)
+#     return np.array(board_mat)
+
+# def board_to_rep(board):
+#     pieces = ['p', 'r', 'n', 'b', 'q', 'k']
+#     layers = []
+#     for piece in pieces:
+#         layers.append(create_rep_layer(board, piece))
+#     board_rep = np.stack(layers)
+#     return board_rep
+
+def create_position_encoding(board: chess.Board, idx: int, seq_len: int = 100) -> List[int]:
+    """Create position encoding from chess board state.
+    board: The current chess board state
+    idx: The index of the board state, used for determining white or black play
+    seq_len: The desired length of the output sequence
+    """
+    # Encode board state as a sequence of piece positions
+    encoding = []
+    # For each square on the board (a1-h8), encode what piece is there
+
+    for square_idx in range(64):
+        square = chess.Square(square_idx)
+        rank = square_idx // 8
+        file = square_idx % 8
+        piece = board.piece_at(square)
+        # print(piece.piece_type)
+        piece_value = 0
+        if piece is not None:
+            # 1-6 for white pieces, 7-12 for black pieces
+            piece_value = (piece.piece_type) + (0 if piece.color == chess.WHITE else 6)
+            # print(board.turn == chess.WHITE)
+        encoding.extend([
+            piece_value,
+            rank,
+            file
+        ])
+    # Add game state information
+    encoding.extend([
+        1 if board.turn == chess.WHITE else 0,  # Whose turn
+        1 if board.has_kingside_castling_rights(chess.WHITE) else 0,
+        1 if board.has_queenside_castling_rights(chess.WHITE) else 0,
+        1 if board.has_kingside_castling_rights(chess.BLACK) else 0,
+        1 if board.has_queenside_castling_rights(chess.BLACK) else 0,
+        # board.ep_square if board.ep_square is not None else 0,  # En passant square
+        min(board.halfmove_clock, 255),  # 50-move rule counter
+        min(board.fullmove_number, 1000)  # Move number
+    ])
     
-    # Encode recent moves (simplified position representation)
-    encoded_moves = []
-    for move in moves[-max_history:]:
-        encoded_moves.append(encoder.encode_move(move))
-    
-    # Pad or truncate to fixed length
-    while len(encoded_moves) < max_history:
-        encoded_moves.insert(0, 0)  # Pad with empty moves
-    
-    return encoded_moves[:max_history]
+    # Pad or truncate to target sequence length
+    while len(encoding) < seq_len:
+        encoding.append(0)  # Pad with zeros
+    return encoding[:seq_len]
 
 
 def build_chess_dataset(
@@ -188,7 +299,7 @@ def build_chess_dataset(
     else:
         # Create equal ELO ranges
         min_elo_range = min_elo
-        max_elo_range = 4000 # Arbitrary upper limit for now
+        max_elo_range = 3600 # Arbitrary upper limit for now
         step = (max_elo_range - min_elo_range) // num_groups
         for i in range(num_groups):
             start = min_elo_range + i * step
@@ -198,11 +309,12 @@ def build_chess_dataset(
     print(f"Creating {num_groups} groups with ELO ranges: {elo_ranges}")
     
     # Track data by group
-    train_data_by_group = {i: {"inputs": [], "targets": [], "move_targets": [], "puzzle_ids": []} for i in range(num_groups)}
-    test_data_by_group = {i: {"inputs": [], "targets": [], "move_targets": [], "puzzle_ids": []} for i in range(num_groups)}
-    
-    position_history_len = 150  # Number of recent moves to include
-    vocab_size = encoder.max_moves + 100  # Buffer for special tokens
+    train_data_by_group = {i: {"inputs": [], "targets": [], "move_targets": [], "puzzle_ids": [], "possible_moves": []} for i in range(num_groups)}
+    test_data_by_group = {i: {"inputs": [], "targets": [], "move_targets": [], "puzzle_ids": [], "possible_moves": []} for i in range(num_groups)}
+
+    # Size of the input state 64 squares, each with 3 infos + 8 additional infos
+    position_history_len = 8*8*3+8
+    vocab_size = encoder.max_moves
     
     print(f"Processing chess games from {csv_path}...")
     
@@ -245,21 +357,34 @@ def build_chess_dataset(
             moves = parser.parse_game(pgn_str)
             if len(moves) < 10:  # Skip very short games
                 continue
+
+            # Get board states and the converted moves
+            boards, converted_moves = parser.convert_moves_and_boards(moves)
             
             # Create training examples: predict next move from position
-            for move_idx in range(min(len(moves) - 1, max_moves_per_game)):
-                # Input: recent move history
-                position_encoding = create_position_encoding(moves[:move_idx + 1], position_history_len)
-                
+            for move_idx in range(min(len(converted_moves) - 1, max_moves_per_game)):
+                # get corresponding board state for that move
+                board = boards[move_idx]
+                # get possible moves from this board state
+                possible_moves = list(board.legal_moves)
+                test_conv = encoder.encode_move(board, possible_moves[0])
+
+                # Input: board state
+                position_encoding = create_position_encoding(board, move_idx, position_history_len)
+
                 # Target: next move
-                next_move = moves[move_idx + 1]
-                move_target = encoder.encode_move(next_move)
-                
+                move = converted_moves[move_idx]
+                #encoded move
+                move_target = encoder.encode_move(board, move)
+
+                #Encoded possible moves (going to be used for masking)
+                encoded_possible_moves = [encoder.encode_move(board, m) for m in possible_moves]
+
                 # HRM format
                 inputs = position_encoding
                 labels = [-100] * len(inputs)  # No sequence generation labels needed
-                puzzle_id = games_per_group[group_id] % 1000  # Unique puzzle ID within group
-                
+                puzzle_id = games_per_group[group_id]  # Unique puzzle ID within group
+
                 # Split train/test
                 is_train = (valid_positions % 10) < (train_ratio * 10)  # Simple split
                 
@@ -267,11 +392,13 @@ def build_chess_dataset(
                     train_data_by_group[group_id]["inputs"].append(inputs)
                     train_data_by_group[group_id]["targets"].append(labels)
                     train_data_by_group[group_id]["move_targets"].append(move_target)
+                    train_data_by_group[group_id]["possible_moves"].append(encoded_possible_moves)
                     train_data_by_group[group_id]["puzzle_ids"].append(puzzle_id)
                 else:
                     test_data_by_group[group_id]["inputs"].append(inputs)
                     test_data_by_group[group_id]["targets"].append(labels)
                     test_data_by_group[group_id]["move_targets"].append(move_target)
+                    test_data_by_group[group_id]["possible_moves"].append(encoded_possible_moves)
                     test_data_by_group[group_id]["puzzle_ids"].append(puzzle_id)
                 
                 valid_positions += 1
@@ -302,6 +429,7 @@ def build_chess_dataset(
         all_labels = []
         all_move_targets = []
         all_puzzle_identifiers = []
+        all_possible_moves = []
         
         # Create group_indices: [start_group0, start_group1, ..., end]
         group_indices = [0]
@@ -335,7 +463,8 @@ def build_chess_dataset(
                 all_labels.append(group_data["targets"][idx])
                 all_move_targets.append(group_data["move_targets"][idx])
                 all_puzzle_identifiers.append(0)
-            
+                all_possible_moves.append(group_data["possible_moves"][idx])
+
             # Update group boundary
             group_indices.append(current_puzzle_id + 1)
         
@@ -349,7 +478,8 @@ def build_chess_dataset(
         np.save(os.path.join(save_dir, "all__puzzle_identifiers.npy"), np.array(all_puzzle_identifiers, dtype=np.int32))
         np.save(os.path.join(save_dir, "all__puzzle_indices.npy"), np.array(puzzle_indices, dtype=np.int32))
         np.save(os.path.join(save_dir, "all__group_indices.npy"), np.array(group_indices, dtype=np.int32))
-    
+        np.save(os.path.join(save_dir, "all__possible_moves.npy"), np.array(all_possible_moves, dtype=object))  # Object array for variable-length lists
+
     # Save training and test data
     save_multi_group_data(train_data_by_group, train_dir, num_groups)
     save_multi_group_data(test_data_by_group, test_dir, num_groups)
@@ -418,7 +548,7 @@ if __name__ == "__main__":
                        help="Path to chess games CSV")
     parser.add_argument("--output-dir", default="data/chess-move-prediction", 
                        help="Output directory")
-    parser.add_argument("--max-games", type=int, default=6000,
+    parser.add_argument("--max-games", type=int, default=4000,
                        help="Maximum number of games to process")
     parser.add_argument("--min-elo", type=int, default=2700,
                        help="Minimum ELO rating")
