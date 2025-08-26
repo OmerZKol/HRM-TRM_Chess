@@ -20,10 +20,10 @@ python run_dataset_visualization.py
 
 ## Current Model Architecture
 
-- **Input**: Last 100 moves (adjustable) in a chess game (encoded as integers)
+- **Input**: Board state at the current turn, encoded as a flat tensor, containing information about all pieces and their positions, as well as some additional information
 - **Output**: Next best move prediction
 - **Method**: Hierarchical reasoning with variable computation time
-- **Dataset**: High-ELO chess games (2200+ rating (adjustable)) converted to move sequences
+- **Dataset**: High-ELO chess games (2600+ rating (adjustable)) converted to move sequences
 
 ## Key Features
 
@@ -40,7 +40,7 @@ python run_dataset_visualization.py
 
 ### Dataset
 - `dataset/build_chess_dataset.py` - Converts PGN games stored in `data/chess_games.csv` to HRM format
-- `run_dataset_visualization.py` - Visualise dataset statistics and samples
+- `visualisation/run_dataset_visualization.py` - Visualise dataset statistics and samples
 
 ### Utilities
 - `test_chess_dataset.py` - Dataset instantiation tests

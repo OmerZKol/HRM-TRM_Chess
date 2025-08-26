@@ -561,7 +561,7 @@ if __name__ == "__main__":
                        help="Path to chess games CSV")
     parser.add_argument("--output-dir", default="data/chess-move-prediction", 
                        help="Output directory")
-    parser.add_argument("--max-games", type=int, default=400,
+    parser.add_argument("--max-games", type=int, default=5000,
                        help="Maximum number of games to process")
     parser.add_argument("--min-elo", type=int, default=2700,
                        help="Minimum ELO rating")
