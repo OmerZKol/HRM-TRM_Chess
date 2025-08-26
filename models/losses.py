@@ -84,23 +84,34 @@ class ACTLossHead(nn.Module):
         lm_loss = (self.loss_fn(outputs["logits"], labels, ignore_index=IGNORE_LABEL_ID) / loss_divisor).sum()
         q_halt_loss = F.binary_cross_entropy_with_logits(outputs["q_halt_logits"], seq_is_correct.to(outputs["q_halt_logits"].dtype), reduction="sum")
 
-        # Move prediction loss (NEW)
+        # Move prediction loss with masking (NEW)
         move_loss = 0
         if "move_logits" in outputs and "move_targets" in new_carry.current_data:
             move_targets = new_carry.current_data["move_targets"]
             valid_move_mask = move_targets != IGNORE_LABEL_ID
             
             if valid_move_mask.any():
+                move_logits = outputs["move_logits"][valid_move_mask]
+                move_targets_valid = move_targets[valid_move_mask].long()
+                
+                # Apply move masks if available
+                if "move_masks" in new_carry.current_data:
+                    move_masks = new_carry.current_data["move_masks"][valid_move_mask]
+                    # Convert to boolean and set invalid moves to very negative value before softmax
+                    move_masks_bool = move_masks.bool()
+                    masked_logits = torch.where(move_masks_bool, move_logits, torch.full_like(move_logits, -1e9))
+                    move_logits = masked_logits
+                
                 move_loss = F.cross_entropy(
-                    outputs["move_logits"][valid_move_mask], 
-                    move_targets[valid_move_mask].long(), 
+                    move_logits, 
+                    move_targets_valid, 
                     reduction="sum"
                 ) * self.move_loss_weight
                 
-                # Move prediction accuracy
+                # Move prediction accuracy (using masked logits)
                 with torch.no_grad():
-                    move_predictions = torch.argmax(outputs["move_logits"], dim=-1)
-                    move_correct = (move_predictions == move_targets.long()) & valid_move_mask
+                    move_predictions = torch.argmax(move_logits, dim=-1)
+                    move_correct = (move_predictions == move_targets_valid)
                     metrics["move_accuracy"] = move_correct.sum()
                     metrics["move_count"] = valid_move_mask.sum()
 

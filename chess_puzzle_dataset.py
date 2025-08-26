@@ -25,6 +25,10 @@ class ChessPuzzleDataset(PuzzleDataset):
     
     def __init__(self, config: ChessPuzzleDatasetConfig, split: str = "train"):
         super().__init__(config, split)
+        # Load dataset metadata to get num_actions for masking
+        with open(os.path.join(config.dataset_path, "dataset.json"), 'r') as f:
+            self.dataset_metadata = json.load(f)
+    
     
     def _lazy_load_dataset(self):
         if self._data is not None:
@@ -33,7 +37,8 @@ class ChessPuzzleDataset(PuzzleDataset):
         field_mmap_modes = {
             "inputs": "r",
             "labels": "r",
-            "move_targets": "r",  # NEW: Move prediction targets
+            "move_targets": "r",  # Move prediction targets
+            "possible_moves": "r",  # Keep possible moves in memory for masking
 
             # Keep indices in memory
             "puzzle_identifiers": None,
@@ -51,8 +56,15 @@ class ChessPuzzleDataset(PuzzleDataset):
             }
 
     def _collate_batch(self, batch):
-        # Convert dtype
-        batch = {k: v.astype(np.int32) for k, v in batch.items()}
+        # Convert dtype, handling possible_moves specially (they're already masks as float32)
+        converted_batch = {}
+        for k, v in batch.items():
+            if k == "possible_moves":
+                # possible_moves are already binary masks stored as float32
+                converted_batch[k] = v.astype(np.float32)
+            else:
+                converted_batch[k] = v.astype(np.int32)
+        batch = converted_batch
 
         # Convert ignore label IDs
         if self.metadata.ignore_label_id is not None:
@@ -68,13 +80,21 @@ class ChessPuzzleDataset(PuzzleDataset):
             pad_values = {
                 "inputs": self.metadata.pad_id,
                 "labels": IGNORE_LABEL_ID,
-                "move_targets": IGNORE_LABEL_ID,  # NEW: Pad move targets too
-                "puzzle_identifiers": self.metadata.blank_identifier_id
+                "move_targets": IGNORE_LABEL_ID,
+                "puzzle_identifiers": self.metadata.blank_identifier_id,
+                "possible_moves": 0.0  # Pad with zeros (no valid moves)
             }
             batch = {k: np.pad(v, ((0, pad_size), ) + ((0, 0), ) * (v.ndim - 1), constant_values=pad_values.get(k, 0)) for k, v in batch.items()}
 
-        # To tensor
-        return {k: torch.from_numpy(v) for k, v in batch.items()}
+        # Convert to tensor and rename possible_moves to move_masks
+        batch_tensors = {}
+        for k, v in batch.items():
+            if k == "possible_moves":
+                batch_tensors["move_masks"] = torch.from_numpy(v)
+            else:
+                batch_tensors[k] = torch.from_numpy(v)
+        
+        return batch_tensors
     
     def _iter_test(self):
         for set_name, dataset in self._data.items():  # type: ignore
@@ -107,6 +127,10 @@ class ChessPuzzleDataset(PuzzleDataset):
                 # Add move targets if available
                 if "move_targets" in dataset:
                     batch_data["move_targets"] = dataset["move_targets"][local_start: local_end]
+                
+                # Add possible moves if available
+                if "possible_moves" in dataset:
+                    batch_data["possible_moves"] = dataset["possible_moves"][local_start: local_end]
                 
                 batch = self._collate_batch(batch_data)
 
@@ -158,6 +182,10 @@ class ChessPuzzleDataset(PuzzleDataset):
                 # Add move targets if available
                 if "move_targets" in dataset:
                     batch_data["move_targets"] = dataset["move_targets"][batch_indices]
+                
+                # Add possible moves if available
+                if "possible_moves" in dataset:
+                    batch_data["possible_moves"] = dataset["possible_moves"][batch_indices]
                 batch = self._collate_batch(batch_data)
 
                 yield set_name, batch, global_effective_batch_size

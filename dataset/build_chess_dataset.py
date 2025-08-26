@@ -225,6 +225,20 @@ class SimplePGNParser:
 #     board_rep = np.stack(layers)
 #     return board_rep
 
+def create_move_mask(possible_moves, num_actions):
+        """Create binary mask for valid moves.
+        
+        Args:
+            possible_moves: List of lists, each containing valid move indices for a position
+            num_actions: Total number of possible actions in the vocabulary
+            
+        Returns:
+            np array: Binary mask of shape (batch_size, num_actions) where 1 = valid move, 0 = invalid
+        """
+        mask = np.zeros((num_actions), dtype=np.float32)
+        mask[possible_moves] = True
+        return mask
+
 def create_position_encoding(board: chess.Board, idx: int, seq_len: int = 100) -> List[int]:
     """Create position encoding from chess board state.
     board: The current chess board state
@@ -367,7 +381,6 @@ def build_chess_dataset(
                 board = boards[move_idx]
                 # get possible moves from this board state
                 possible_moves = list(board.legal_moves)
-                test_conv = encoder.encode_move(board, possible_moves[0])
 
                 # Input: board state
                 position_encoding = create_position_encoding(board, move_idx, position_history_len)
@@ -379,6 +392,7 @@ def build_chess_dataset(
 
                 #Encoded possible moves (going to be used for masking)
                 encoded_possible_moves = [encoder.encode_move(board, m) for m in possible_moves]
+                mask = create_move_mask(encoded_possible_moves, encoder.max_moves)
 
                 # HRM format
                 inputs = position_encoding
@@ -392,13 +406,13 @@ def build_chess_dataset(
                     train_data_by_group[group_id]["inputs"].append(inputs)
                     train_data_by_group[group_id]["targets"].append(labels)
                     train_data_by_group[group_id]["move_targets"].append(move_target)
-                    train_data_by_group[group_id]["possible_moves"].append(encoded_possible_moves)
+                    train_data_by_group[group_id]["possible_moves"].append(mask)
                     train_data_by_group[group_id]["puzzle_ids"].append(puzzle_id)
                 else:
                     test_data_by_group[group_id]["inputs"].append(inputs)
                     test_data_by_group[group_id]["targets"].append(labels)
                     test_data_by_group[group_id]["move_targets"].append(move_target)
-                    test_data_by_group[group_id]["possible_moves"].append(encoded_possible_moves)
+                    test_data_by_group[group_id]["possible_moves"].append(mask)
                     test_data_by_group[group_id]["puzzle_ids"].append(puzzle_id)
                 
                 valid_positions += 1
@@ -464,7 +478,6 @@ def build_chess_dataset(
                 all_move_targets.append(group_data["move_targets"][idx])
                 all_puzzle_identifiers.append(0)
                 all_possible_moves.append(group_data["possible_moves"][idx])
-
             # Update group boundary
             group_indices.append(current_puzzle_id + 1)
         
@@ -478,7 +491,7 @@ def build_chess_dataset(
         np.save(os.path.join(save_dir, "all__puzzle_identifiers.npy"), np.array(all_puzzle_identifiers, dtype=np.int32))
         np.save(os.path.join(save_dir, "all__puzzle_indices.npy"), np.array(puzzle_indices, dtype=np.int32))
         np.save(os.path.join(save_dir, "all__group_indices.npy"), np.array(group_indices, dtype=np.int32))
-        np.save(os.path.join(save_dir, "all__possible_moves.npy"), np.array(all_possible_moves, dtype=object))  # Object array for variable-length lists
+        np.save(os.path.join(save_dir, "all__possible_moves.npy"), np.array(all_possible_moves, dtype=np.int32))  # Object array for variable-length lists
 
     # Save training and test data
     save_multi_group_data(train_data_by_group, train_dir, num_groups)
@@ -548,7 +561,7 @@ if __name__ == "__main__":
                        help="Path to chess games CSV")
     parser.add_argument("--output-dir", default="data/chess-move-prediction", 
                        help="Output directory")
-    parser.add_argument("--max-games", type=int, default=4000,
+    parser.add_argument("--max-games", type=int, default=400,
                        help="Maximum number of games to process")
     parser.add_argument("--min-elo", type=int, default=2700,
                        help="Minimum ELO rating")
