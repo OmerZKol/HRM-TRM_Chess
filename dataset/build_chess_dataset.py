@@ -203,28 +203,6 @@ class SimplePGNParser:
             boards.append(board.copy())
         return boards, converted_moves
 
-# def create_rep_layer(board, piece):
-#     s = str(board)
-#     s = re.sub(f'[^{piece}{piece.upper()} \n]', '.', s)
-#     s = re.sub(f'{piece}', '-1', s)
-#     s = re.sub(f'{piece.upper()}', '1', s)
-#     s = re.sub('\.', '0', s)
-
-#     board_mat = []
-#     for row in s.split('\n'):
-#         row = row.split(' ')
-#         row = [int(x) for x in row]
-#         board_mat.append(row)
-#     return np.array(board_mat)
-
-# def board_to_rep(board):
-#     pieces = ['p', 'r', 'n', 'b', 'q', 'k']
-#     layers = []
-#     for piece in pieces:
-#         layers.append(create_rep_layer(board, piece))
-#     board_rep = np.stack(layers)
-#     return board_rep
-
 def create_move_mask(possible_moves, num_actions):
         """Create binary mask for valid moves.
         
@@ -239,48 +217,110 @@ def create_move_mask(possible_moves, num_actions):
         mask[possible_moves] = True
         return mask
 
-def create_position_encoding(board: chess.Board, idx: int, seq_len: int = 100) -> List[int]:
-    """Create position encoding from chess board state.
-    board: The current chess board state
-    idx: The index of the board state, used for determining white or black play
-    seq_len: The desired length of the output sequence
-    """
-    # Encode board state as a sequence of piece positions
-    encoding = []
-    # For each square on the board (a1-h8), encode what piece is there
-
-    for square_idx in range(64):
-        square = chess.Square(square_idx)
-        rank = square_idx // 8
-        file = square_idx % 8
-        piece = board.piece_at(square)
-        # print(piece.piece_type)
-        piece_value = 0
-        if piece is not None:
-            # 1-6 for white pieces, 7-12 for black pieces
-            piece_value = (piece.piece_type) + (0 if piece.color == chess.WHITE else 6)
-            # print(board.turn == chess.WHITE)
-        encoding.extend([
-            piece_value,
-            rank,
-            file
-        ])
-    # Add game state information
-    encoding.extend([
-        1 if board.turn == chess.WHITE else 0,  # Whose turn
-        1 if board.has_kingside_castling_rights(chess.WHITE) else 0,
-        1 if board.has_queenside_castling_rights(chess.WHITE) else 0,
-        1 if board.has_kingside_castling_rights(chess.BLACK) else 0,
-        1 if board.has_queenside_castling_rights(chess.BLACK) else 0,
-        # board.ep_square if board.ep_square is not None else 0,  # En passant square
-        min(board.halfmove_clock, 255),  # 50-move rule counter
-        min(board.fullmove_number, 1000)  # Move number
-    ])
+def create_position_encoding(board_history: List[chess.Board], seq_len: int = 64) -> List[List[int]]:
+    """Create square-centric position encoding from chess board history.
     
-    # Pad or truncate to target sequence length
-    while len(encoding) < seq_len:
-        encoding.append(0)  # Pad with zeros
-    return encoding[:seq_len]
+    Args:
+        board_history: List of board states (current + up to 7 previous positions)
+        seq_len: Target sequence length (64 squares)
+    
+    Returns:
+        List of 64 subarrays, each containing all information about that specific square
+        Each square's array contains: [historical_pieces, castling_info, ep_info, other_features]
+    """
+    
+    # Ensure we have at most 8 positions (current + 7 previous)
+    if len(board_history) > 8:
+        board_history = board_history[-8:]
+    
+    # Get current board (most recent)
+    current_board = board_history[-1] if board_history else chess.Board()
+    
+    # Initialize encoding: 64 squares, each containing all information about that square
+    square_encodings = []
+    
+    # Process each of the 64 squares
+    for square in chess.SQUARES:
+        square_info = []
+        
+        # ===== HISTORICAL PIECE INFORMATION (96 features per square) =====
+        # 8 time steps × 12 piece types = 96 features
+        
+        for time_step in range(8):
+            # Get board for this time step (or empty board if not available)
+            if time_step < len(board_history):
+                board = board_history[-(time_step + 1)]  # Most recent first
+            else:
+                board = chess.Board()
+                board.clear()  # Empty board for missing history
+            
+            # Check what piece (if any) is on this square for each piece type
+            # White pieces (6 features): Pawns, Rooks, Knights, Bishops, Queens, King
+            for piece_type in [chess.PAWN, chess.ROOK, chess.KNIGHT, chess.BISHOP, chess.QUEEN, chess.KING]:
+                piece = board.piece_at(square)
+                if piece and piece.piece_type == piece_type and piece.color == chess.WHITE:
+                    square_info.append(1)
+                else:
+                    square_info.append(0)
+            
+            # Black pieces (6 features): Pawns, Rooks, Knights, Bishops, Queens, King  
+            for piece_type in [chess.PAWN, chess.ROOK, chess.KNIGHT, chess.BISHOP, chess.QUEEN, chess.KING]:
+                piece = board.piece_at(square)
+                if piece and piece.piece_type == piece_type and piece.color == chess.BLACK:
+                    square_info.append(1)
+                else:
+                    square_info.append(0)
+        
+        # ===== GAME STATE INFORMATION (16 features per square) =====
+        # These are the same for all squares but included for each square
+        
+        # Castling Rights (4 features)
+        square_info.append(1 if current_board.has_kingside_castling_rights(chess.WHITE) else 0)
+        square_info.append(1 if current_board.has_queenside_castling_rights(chess.WHITE) else 0)
+        square_info.append(1 if current_board.has_kingside_castling_rights(chess.BLACK) else 0)
+        square_info.append(1 if current_board.has_queenside_castling_rights(chess.BLACK) else 0)
+        
+        # En Passant Information (1 feature)
+        ep_square = current_board.ep_square
+        square_info.append(1 if ep_square is not None and square == ep_square else 0)
+        
+        # Repetition Information (8 features) - simplified
+        # For now, set all to 0 (would need full game history to detect repetitions)
+        for _ in range(8):
+            square_info.append(0)
+        
+        # Rule50 Counter (1 feature)
+        rule50_value = min(current_board.halfmove_clock / 100.0, 1.0)  # Normalize to [0,1]
+        square_info.append(int(rule50_value * 255))  # Scale to 0-255 range
+        
+        # Side to Move (1 feature)
+        square_info.append(1 if current_board.turn == chess.WHITE else 0)
+        
+        # All-ones Constant (1 feature)
+        square_info.append(1)
+        
+        # Add this square's information to the encoding
+        square_encodings.append(square_info)
+    
+    # Verify we have exactly 64 squares
+    if len(square_encodings) != 64:
+        print(f"Warning: square count {len(square_encodings)} != expected 64")
+        # Pad or truncate to 64 squares
+        while len(square_encodings) < 64:
+            square_encodings.append([0] * 112)  # Add empty square with 112 features
+        square_encodings = square_encodings[:64]
+    
+    # Verify each square has exactly 112 features (96 historical + 16 game state)
+    expected_features = 96 + 16  # 112 features per square
+    for i, square_info in enumerate(square_encodings):
+        if len(square_info) != expected_features:
+            print(f"Warning: square {i} has {len(square_info)} features != expected {expected_features}")
+            # Pad or truncate to correct number of features
+            while len(square_info) < expected_features:
+                square_info.append(0)
+            square_encodings[i] = square_info[:expected_features]
+    
+    return square_encodings
 
 
 def build_chess_dataset(
@@ -326,8 +366,8 @@ def build_chess_dataset(
     train_data_by_group = {i: {"inputs": [], "targets": [], "move_targets": [], "puzzle_ids": [], "possible_moves": []} for i in range(num_groups)}
     test_data_by_group = {i: {"inputs": [], "targets": [], "move_targets": [], "puzzle_ids": [], "possible_moves": []} for i in range(num_groups)}
 
-    # Size of the input state 64 squares, each with 3 infos + 8 additional infos
-    position_history_len = 8*8*3+8
+    # Square-centric input: 64 squares, each with 112 features
+    position_history_len = 64  # 64 squares as sequence length
     vocab_size = encoder.max_moves
     
     print(f"Processing chess games from {csv_path}...")
@@ -382,8 +422,17 @@ def build_chess_dataset(
                 # get possible moves from this board state
                 possible_moves = list(board.legal_moves)
 
-                # Input: board state
-                position_encoding = create_position_encoding(board, move_idx, position_history_len)
+                # Create board history (current + up to 7 previous positions)
+                board_history = []
+                for hist_idx in range(max(0, move_idx - 7), move_idx + 1):
+                    if hist_idx < len(boards):
+                        board_history.append(boards[hist_idx])
+                
+                # Reverse so most recent is last (expected by create_position_encoding)
+                board_history.reverse()
+
+                # Input: LC0-style board state encoding
+                position_encoding = create_position_encoding(board_history, position_history_len)
 
                 # Target: next move
                 move = converted_moves[move_idx]
@@ -561,9 +610,9 @@ if __name__ == "__main__":
                        help="Path to chess games CSV")
     parser.add_argument("--output-dir", default="data/chess-move-prediction", 
                        help="Output directory")
-    parser.add_argument("--max-games", type=int, default=5000,
+    parser.add_argument("--max-games", type=int, default=2000,
                        help="Maximum number of games to process")
-    parser.add_argument("--min-elo", type=int, default=2700,
+    parser.add_argument("--min-elo", type=int, default=2800,
                        help="Minimum ELO rating")
     parser.add_argument("--max-moves-per-game", type=int, default=150,
                        help="Maximum moves per game to use")

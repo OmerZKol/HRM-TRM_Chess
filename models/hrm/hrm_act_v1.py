@@ -158,8 +158,18 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
             self.q_head.bias.fill_(-5)  # type: ignore
 
     def _input_embeddings(self, input: torch.Tensor, puzzle_identifiers: torch.Tensor):
-        # Token embedding
-        embedding = self.embed_tokens(input.to(torch.int32))
+        # Handle different input formats:
+        if input.dim() == 3:  # [batch, squares, features] - square-centric chess format
+            batch_size, num_squares, features_per_square = input.shape
+            # Each square has multiple features that need to be converted to a single token
+            # Use a hash/sum of the features as the token index
+            token_indices = torch.clamp(input.sum(dim=-1), 0, self.config.vocab_size - 1)
+            # Now token_indices is [batch, squares] where each square becomes one token
+            embedding = self.embed_tokens(token_indices.to(torch.int32))
+        elif input.dim() == 2:  # Original 1D format [batch, seq_len] - direct token indices
+            embedding = self.embed_tokens(input.to(torch.int32))
+        else:
+            raise ValueError(f"Unsupported input tensor dimension: {input.dim()}")
 
         # Puzzle embeddings
         if self.config.puzzle_emb_ndim > 0:

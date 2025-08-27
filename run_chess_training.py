@@ -24,12 +24,11 @@ def run_command(cmd, description):
     
     print(f"✓ {description} completed successfully!")
 
-
 def main():
     parser = argparse.ArgumentParser(description="Train HRM for chess move prediction")
     parser.add_argument("--csv-path", default="data/chess_games_more_filtered.csv",
                        help="Path to chess games CSV file")
-    parser.add_argument("--max-games", type=int, default=10000,
+    parser.add_argument("--max-games", type=int, default=5000,
                        help="Maximum number of games to process")
     parser.add_argument("--min-elo", type=int, default=2200,
                        help="Minimum ELO rating for games")
