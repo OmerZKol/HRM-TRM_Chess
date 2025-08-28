@@ -38,11 +38,12 @@ def softmax_cross_entropy(logits, labels, ignore_index: int = -100):
 
 
 class ACTLossHead(nn.Module):
-    def __init__(self, model: nn.Module, loss_type: str, move_loss_weight: float = 1.0):
+    def __init__(self, model: nn.Module, loss_type: str, move_loss_weight: float = 1.0, value_loss_weight: float = 1.0):
         super().__init__()
         self.model = model
         self.loss_fn = globals()[loss_type]
         self.move_loss_weight = move_loss_weight  # Weight for move prediction loss (NEW)
+        self.value_loss_weight = value_loss_weight  # Weight for value prediction loss (NEW)
         
     def initial_carry(self, *args, **kwargs):
         return self.model.initial_carry(*args, **kwargs)  # type: ignore
@@ -115,10 +116,42 @@ class ACTLossHead(nn.Module):
                     metrics["move_accuracy"] = move_correct.sum()
                     metrics["move_count"] = valid_move_mask.sum()
 
+        # Value prediction loss (NEW)
+        value_loss = 0
+        if "value_logits" in outputs and "value_targets" in new_carry.current_data:
+            value_logits = outputs["value_logits"]
+            value_targets = new_carry.current_data["value_targets"]
+            
+            # Only compute loss for valid value targets (not NaN or special values)
+            valid_value_mask = ~torch.isnan(value_targets)
+            
+            if valid_value_mask.any():
+                value_logits_valid = value_logits[valid_value_mask]
+                value_targets_valid = value_targets[valid_value_mask]
+                
+                # Use MSE loss for value prediction (regression)
+                value_loss = F.mse_loss(
+                    value_logits_valid, 
+                    value_targets_valid, 
+                    reduction="sum"
+                ) * self.value_loss_weight
+                
+                # Value prediction metrics
+                with torch.no_grad():
+                    # Mean absolute error
+                    value_mae = torch.abs(value_logits_valid - value_targets_valid).mean()
+                    metrics["value_mae"] = value_mae
+                    metrics["value_count"] = valid_value_mask.sum()
+                    
+                    # Sign accuracy (for chess: does the model predict the right winning side?)
+                    value_sign_correct = (torch.sign(value_logits_valid) == torch.sign(value_targets_valid))
+                    metrics["value_sign_accuracy"] = value_sign_correct.sum()
+
         metrics.update({
             "lm_loss": lm_loss.detach(),
             "q_halt_loss": q_halt_loss.detach(),
             "move_loss": move_loss.detach() if torch.is_tensor(move_loss) else torch.tensor(move_loss),
+            "value_loss": value_loss.detach() if torch.is_tensor(value_loss) else torch.tensor(value_loss),
         })
 
         # Q continue (bootstrapping target loss)
@@ -131,7 +164,7 @@ class ACTLossHead(nn.Module):
         # Filter outputs for return
         detached_outputs = {k: outputs[k].detach() for k in return_keys if k in outputs}
 
-        # Total loss includes move prediction loss (NEW)
-        total_loss = lm_loss + 0.5 * (q_halt_loss + q_continue_loss) + move_loss
+        # Total loss includes move and value prediction losses (NEW)
+        total_loss = lm_loss + 0.5 * (q_halt_loss + q_continue_loss) + move_loss + value_loss
 
         return new_carry, total_loss, metrics, detached_outputs, new_carry.halted.all()

@@ -91,6 +91,13 @@ target/
 profile_default/
 ipython_config.py
 test_square_dataset.py
+demo_tokenization_process.py
+test_chess_tokenization.py
+quick_training_test.py
+test_training_setup.py
+test_value_estimation.py
+test_value_prediction.py
+
 # pyenv
 #   For a library or package, you might want to ignore these files since the code is
 #   intended to run in multiple environments; otherwise, check them in:

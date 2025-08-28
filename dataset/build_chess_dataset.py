@@ -217,6 +217,59 @@ def create_move_mask(possible_moves, num_actions):
         mask[possible_moves] = True
         return mask
 
+def calculate_position_value(result_str: str, move_index: int, total_moves: int, side_to_move: bool) -> float:
+    """Calculate estimated position value based on game result.
+    
+    Args:
+        result_str: Game result ("1-0", "0-1", "1/2-1/2")
+        move_index: Current move number (0-based)
+        total_moves: Total number of moves in the game
+        side_to_move: True if white to move, False if black to move
+        
+    Returns:
+        Float value between -1 and 1 representing position evaluation
+        (1 = winning for white, -1 = winning for black, 0 = equal)
+    """
+    # Parse game result
+    if result_str == "1-0":  # White wins
+        final_value = 1.0
+    elif result_str == "0-1":  # Black wins
+        final_value = -1.0
+    elif result_str == "1/2-1/2":  # Draw
+        final_value = 0.0
+    else:
+        final_value = 0.0  # Default for unknown results
+    
+    # Calculate how far through the game we are (0.0 to 1.0)
+    game_progress = move_index / max(total_moves - 1, 1)
+    
+    # Early in the game, positions are closer to equal (0)
+    # Later in the game, they approach the final result
+    # Use a sigmoid-like curve to gradually approach the final value
+    
+    # Interpolate between neutral (0.0) and final result
+    # Early positions have less certain outcomes
+    uncertainty_factor = 1.0 - (0.8 * (1.0 - game_progress))  # More uncertainty early
+    estimated_value = final_value * uncertainty_factor
+    
+    # Add some noise based on game phase to account for tactical complexity
+    # Opening/endgame tend to be more predictable than middlegame
+    if game_progress < 0.2 or game_progress > 0.8:
+        # Opening or endgame - more predictable
+        noise_factor = 0.9
+    else:
+        # Middlegame - more tactical uncertainty
+        noise_factor = 0.7
+    
+    estimated_value *= noise_factor
+    
+    # From black's perspective, flip the value
+    if not side_to_move:
+        estimated_value = -estimated_value
+    
+    # Ensure value stays in [-1, 1] range
+    return max(-1.0, min(1.0, estimated_value))
+
 def create_position_encoding(board_history: List[chess.Board], seq_len: int = 64) -> List[List[int]]:
     """Create square-centric position encoding from chess board history.
     
@@ -363,8 +416,8 @@ def build_chess_dataset(
     print(f"Creating {num_groups} groups with ELO ranges: {elo_ranges}")
     
     # Track data by group
-    train_data_by_group = {i: {"inputs": [], "targets": [], "move_targets": [], "puzzle_ids": [], "possible_moves": []} for i in range(num_groups)}
-    test_data_by_group = {i: {"inputs": [], "targets": [], "move_targets": [], "puzzle_ids": [], "possible_moves": []} for i in range(num_groups)}
+    train_data_by_group = {i: {"inputs": [], "targets": [], "move_targets": [], "puzzle_ids": [], "possible_moves": [], "value_targets": []} for i in range(num_groups)}
+    test_data_by_group = {i: {"inputs": [], "targets": [], "move_targets": [], "puzzle_ids": [], "possible_moves": [], "value_targets": []} for i in range(num_groups)}
 
     # Square-centric input: 64 squares, each with 112 features
     position_history_len = 64  # 64 squares as sequence length
@@ -381,13 +434,14 @@ def build_chess_dataset(
         games_per_group = {i: 0 for i in range(num_groups)}
         
         for row in tqdm(reader, desc="Processing games"):
+
             if max_games and game_count >= max_games:
                 break
-            
-            if len(row) < 2:
+
+            if len(row) < 3:
                 continue
-                
-            pgn_str, elo_str = row[0], row[1]
+
+            pgn_str, elo_str, result_str = row[0], row[1], row[2]
             
             # Filter by ELO and assign to group
             try:
@@ -443,6 +497,11 @@ def build_chess_dataset(
                 encoded_possible_moves = [encoder.encode_move(board, m) for m in possible_moves]
                 mask = create_move_mask(encoded_possible_moves, encoder.max_moves)
 
+                # Calculate position value based on game result
+                total_moves_in_game = len(converted_moves)
+                side_to_move = board.turn  # True for white, False for black
+                value_target = calculate_position_value(result_str, move_idx, total_moves_in_game, side_to_move)
+
                 # HRM format
                 inputs = position_encoding
                 labels = [-100] * len(inputs)  # No sequence generation labels needed
@@ -457,12 +516,14 @@ def build_chess_dataset(
                     train_data_by_group[group_id]["move_targets"].append(move_target)
                     train_data_by_group[group_id]["possible_moves"].append(mask)
                     train_data_by_group[group_id]["puzzle_ids"].append(puzzle_id)
+                    train_data_by_group[group_id]["value_targets"].append(value_target)
                 else:
                     test_data_by_group[group_id]["inputs"].append(inputs)
                     test_data_by_group[group_id]["targets"].append(labels)
                     test_data_by_group[group_id]["move_targets"].append(move_target)
                     test_data_by_group[group_id]["possible_moves"].append(mask)
                     test_data_by_group[group_id]["puzzle_ids"].append(puzzle_id)
+                    test_data_by_group[group_id]["value_targets"].append(value_target)
                 
                 valid_positions += 1
             
@@ -493,6 +554,7 @@ def build_chess_dataset(
         all_move_targets = []
         all_puzzle_identifiers = []
         all_possible_moves = []
+        all_value_targets = []
         
         # Create group_indices: [start_group0, start_group1, ..., end]
         group_indices = [0]
@@ -527,6 +589,7 @@ def build_chess_dataset(
                 all_move_targets.append(group_data["move_targets"][idx])
                 all_puzzle_identifiers.append(0)
                 all_possible_moves.append(group_data["possible_moves"][idx])
+                all_value_targets.append(group_data["value_targets"][idx])
             # Update group boundary
             group_indices.append(current_puzzle_id + 1)
         
@@ -541,6 +604,7 @@ def build_chess_dataset(
         np.save(os.path.join(save_dir, "all__puzzle_indices.npy"), np.array(puzzle_indices, dtype=np.int32))
         np.save(os.path.join(save_dir, "all__group_indices.npy"), np.array(group_indices, dtype=np.int32))
         np.save(os.path.join(save_dir, "all__possible_moves.npy"), np.array(all_possible_moves, dtype=np.int32))  # Object array for variable-length lists
+        np.save(os.path.join(save_dir, "all__value_targets.npy"), np.array(all_value_targets, dtype=np.float32))
 
     # Save training and test data
     save_multi_group_data(train_data_by_group, train_dir, num_groups)
@@ -610,9 +674,9 @@ if __name__ == "__main__":
                        help="Path to chess games CSV")
     parser.add_argument("--output-dir", default="data/chess-move-prediction", 
                        help="Output directory")
-    parser.add_argument("--max-games", type=int, default=2000,
+    parser.add_argument("--max-games", type=int, default=1000,
                        help="Maximum number of games to process")
-    parser.add_argument("--min-elo", type=int, default=2800,
+    parser.add_argument("--min-elo", type=int, default=2700,
                        help="Minimum ELO rating")
     parser.add_argument("--max-moves-per-game", type=int, default=150,
                        help="Maximum moves per game to use")

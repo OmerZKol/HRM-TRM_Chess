@@ -58,6 +58,14 @@ class HierarchicalReasoningModel_ACTV1Config(BaseModel):
     use_move_prediction: bool = False
     num_actions: int = 0  # Number of possible moves/actions
     move_prediction_from_token: int = 0  # Which token position to use for move prediction
+    
+    # Value prediction config (NEW)
+    use_value_prediction: bool = False
+    value_prediction_from_token: int = 0  # Which token position to use for value prediction
+    
+    # Chess tokenization config (NEW)
+    use_chess_tokenization: bool = False
+    square_feature_dim: int = 112  # Features per square (historical + game state)
 
     forward_dtype: str = "bfloat16"
 
@@ -126,6 +134,36 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
                 self.move_head.weight.normal_(0, 0.01)
                 if self.move_head.bias is not None:
                     self.move_head.bias.zero_()
+        
+        # Value prediction head (NEW)
+        if self.config.use_value_prediction:
+            self.value_head = CastedLinear(self.config.hidden_size, 1, bias=True)  # Single value output
+            # Initialize value head with small weights for stable learning
+            with torch.no_grad():
+                self.value_head.weight.normal_(0, 0.01)
+                if self.value_head.bias is not None:
+                    self.value_head.bias.zero_()
+
+        # Chess square tokenization (NEW)
+        if self.config.use_chess_tokenization:
+            # Linear projection from square features to hidden dimension
+            self.square_projection = CastedLinear(self.config.square_feature_dim, self.config.hidden_size, bias=True)
+            
+            # Per-square positional encodings (learned offset and scale vectors)
+            self.square_pos_offsets = nn.Parameter(torch.zeros(self.config.seq_len, self.config.hidden_size, dtype=self.forward_dtype))
+            self.square_pos_scales = nn.Parameter(torch.ones(self.config.seq_len, self.config.hidden_size, dtype=self.forward_dtype))
+            
+            # Initialize square projection with proper scaling
+            with torch.no_grad():
+                # Xavier/Glorot initialization for the projection
+                std = (2.0 / (self.config.square_feature_dim + self.config.hidden_size)) ** 0.5
+                self.square_projection.weight.normal_(0, std)
+                if self.square_projection.bias is not None:
+                    self.square_projection.bias.zero_()
+                
+                # Small random initialization for positional encodings
+                self.square_pos_offsets.normal_(0, 0.02)
+                self.square_pos_scales.normal_(1.0, 0.02)
 
         self.puzzle_emb_len = -(self.config.puzzle_emb_ndim // -self.config.hidden_size)  # ceil div
         if self.config.puzzle_emb_ndim > 0:
@@ -159,13 +197,36 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
 
     def _input_embeddings(self, input: torch.Tensor, puzzle_identifiers: torch.Tensor):
         # Handle different input formats:
-        if input.dim() == 3:  # [batch, squares, features] - square-centric chess format
+        if input.dim() == 3 and self.config.use_chess_tokenization:  
+            # [batch, squares, features] - proper chess square tokenization
+            batch_size, num_squares, features_per_square = input.shape
+            
+            # Step 1: Linear projection for each square
+            # Reshape to [batch * squares, features] for projection
+            input_flat = input.view(batch_size * num_squares, features_per_square).to(self.forward_dtype)
+            
+            # Apply linear projection: [batch * squares, features] -> [batch * squares, hidden_size]
+            projected = self.square_projection(input_flat)
+            
+            # Reshape back to [batch, squares, hidden_size]
+            embedding = projected.view(batch_size, num_squares, self.config.hidden_size)
+            
+            # Step 2: Add per-square positional encodings
+            # Each square gets its own learned offset and scale
+            pos_offsets = self.square_pos_offsets.unsqueeze(0)  # [1, squares, hidden_size]
+            pos_scales = self.square_pos_scales.unsqueeze(0)   # [1, squares, hidden_size]
+            
+            # Apply positional encoding: embedding * scale + offset
+            embedding = embedding * pos_scales + pos_offsets
+            
+        elif input.dim() == 3:  # [batch, squares, features] - fallback to sum tokenization
             batch_size, num_squares, features_per_square = input.shape
             # Each square has multiple features that need to be converted to a single token
             # Use a hash/sum of the features as the token index
             token_indices = torch.clamp(input.sum(dim=-1), 0, self.config.vocab_size - 1)
             # Now token_indices is [batch, squares] where each square becomes one token
             embedding = self.embed_tokens(token_indices.to(torch.int32))
+            
         elif input.dim() == 2:  # Original 1D format [batch, seq_len] - direct token indices
             embedding = self.embed_tokens(input.to(torch.int32))
         else:
@@ -181,13 +242,16 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
 
             embedding = torch.cat((puzzle_embedding.view(-1, self.puzzle_emb_len, self.config.hidden_size), embedding), dim=-2)
 
-        # Position embeddings
-        if self.config.pos_encodings == "learned":
+        # Position embeddings (only for non-chess tokenization)
+        if self.config.pos_encodings == "learned" and not self.config.use_chess_tokenization:
             # scale by 1/sqrt(2) to maintain forward variance
             embedding = 0.707106781 * (embedding + self.embed_pos.embedding_weight.to(self.forward_dtype))
 
-        # Scale
-        return self.embed_scale * embedding
+        # Scale (only for non-chess tokenization)
+        if not self.config.use_chess_tokenization:
+            embedding = self.embed_scale * embedding
+            
+        return embedding
 
     def empty_carry(self, batch_size: int):
         return HierarchicalReasoningModel_ACTV1InnerCarry(
@@ -240,7 +304,14 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
             move_token_idx = self.puzzle_emb_len + self.config.move_prediction_from_token
             move_logits = self.move_head(z_H[:, move_token_idx]).to(torch.float32)
         
-        return new_carry, output, (q_logits[..., 0], q_logits[..., 1]), move_logits
+        # Value prediction outputs (NEW)
+        value_logits = None
+        if self.config.use_value_prediction:
+            # Use specified token position for value prediction (default: first token after puzzle embedding)
+            value_token_idx = self.puzzle_emb_len + self.config.value_prediction_from_token
+            value_logits = self.value_head(z_H[:, value_token_idx]).squeeze(-1).to(torch.float32)  # Remove last dimension
+        
+        return new_carry, output, (q_logits[..., 0], q_logits[..., 1]), move_logits, value_logits
 
 
 class HierarchicalReasoningModel_ACTV1(nn.Module):
@@ -279,6 +350,7 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
         inner_result = self.inner(new_inner_carry, new_current_data)
         new_inner_carry, logits, (q_halt_logits, q_continue_logits) = inner_result[:3]
         move_logits = inner_result[3] if len(inner_result) > 3 else None
+        value_logits = inner_result[4] if len(inner_result) > 4 else None
 
         outputs = {
             "logits": logits,
@@ -289,6 +361,10 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
         # Add move prediction outputs (NEW)
         if move_logits is not None:
             outputs["move_logits"] = move_logits
+        
+        # Add value prediction outputs (NEW)
+        if value_logits is not None:
+            outputs["value_logits"] = value_logits
         
         with torch.no_grad():
             # Step
