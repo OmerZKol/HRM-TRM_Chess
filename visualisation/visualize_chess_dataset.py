@@ -45,12 +45,12 @@ class ChessDatasetVisualizer:
         if ChessMoveEncoder:
             try:
                 self.move_encoder = ChessMoveEncoder()
-                print("✅ Chess move encoder loaded successfully")
+                print("[OK] Chess move encoder loaded successfully")
             except Exception as e:
-                print(f"⚠️  Could not initialize move encoder: {e}")
+                print(f"[WARNING] Could not initialize move encoder: {e}")
                 self.move_encoder = None
         else:
-            print("⚠️  Chess move encoder not available")
+            print("[WARNING] Chess move encoder not available")
             self.move_encoder = None
         
         # Load metadata
@@ -67,6 +67,12 @@ class ChessDatasetVisualizer:
         train_examples = len(self.train_data.get('inputs', []))
         test_examples = len(self.test_data.get('inputs', []))
         print(f"\nDataset loaded: {train_examples:,} train + {test_examples:,} test examples")
+        
+        # Check for value targets
+        if 'value_targets' in self.train_data or 'value_targets' in self.test_data:
+            print("[OK] Value targets found - enabling value analysis")
+        else:
+            print("[WARNING] No value targets found - value analysis disabled")
     
     def _load_metadata(self) -> Dict[str, Any]:
         """Load main dataset metadata."""
@@ -118,7 +124,7 @@ class ChessDatasetVisualizer:
         print("=" * 60)
         
         # Main metadata
-        print("\n📊 Dataset Metadata:")
+        print("\nDataset Metadata:")
         for key, value in self.metadata.items():
             if key == "elo_ranges":
                 print(f"  {key}: {len(value)} ELO groups")
@@ -134,7 +140,7 @@ class ChessDatasetVisualizer:
         test_size = len(self.test_data.get('inputs', []))
         total_size = train_size + test_size
         
-        print(f"\n📂 Dataset Splits:")
+        print(f"\nDataset Splits:")
         print(f"  Train: {train_size:,} examples")
         print(f"  Test:  {test_size:,} examples")
         print(f"  Total: {total_size:,} examples")
@@ -145,7 +151,7 @@ class ChessDatasetVisualizer:
             print("  Split ratio: No data found")
         
         # File structure
-        print(f"\n📁 File Structure:")
+        print(f"\nFile Structure:")
         for split in ["train", "test"]:
             split_path = os.path.join(self.dataset_path, split)
             if os.path.exists(split_path):
@@ -198,13 +204,21 @@ class ChessDatasetVisualizer:
             return {}
         
         # Analyze sequence lengths and patterns
+        # For 3D inputs (batch, seq_len, features), count non-zero across all features per sequence position
+        if len(inputs.shape) == 3:
+            # Count non-zero tokens per position per sample, then sum across sequence positions
+            non_zero_counts = np.count_nonzero(inputs, axis=2).sum(axis=1)
+        else:
+            # For 2D inputs, count non-zero per sequence
+            non_zero_counts = np.count_nonzero(inputs, axis=1)
+        
         analysis = {
             'shape': inputs.shape,
-            'non_zero_counts': np.count_nonzero(inputs, axis=1),
+            'non_zero_counts': non_zero_counts,
             'unique_tokens': len(np.unique(inputs)),
             'max_token': np.max(inputs),
             'min_token': np.min(inputs),
-            'mean_non_zero': np.mean(np.count_nonzero(inputs, axis=1))
+            'mean_non_zero': np.mean(non_zero_counts)
         }
         
         return analysis
@@ -229,6 +243,58 @@ class ChessDatasetVisualizer:
             'total_possible_actions': move_masks.shape[1],
             'mask_sparsity': 1 - np.mean(move_masks)  # Fraction of invalid moves
         }
+        
+        return analysis
+    
+    def analyze_value_targets(self, split: str = "train") -> Dict[str, Any]:
+        """Analyze value target distribution and statistics."""
+        data = self.train_data if split == "train" else self.test_data
+        value_targets = data.get('value_targets', np.array([]))
+        
+        if len(value_targets) == 0:
+            return {}
+        
+        # Filter out NaN values for analysis
+        valid_values = value_targets[~np.isnan(value_targets)]
+        
+        if len(valid_values) == 0:
+            return {'all_nan': True}
+        
+        analysis = {
+            'total_samples': len(value_targets),
+            'valid_samples': len(valid_values),
+            'nan_count': len(value_targets) - len(valid_values),
+            'nan_ratio': (len(value_targets) - len(valid_values)) / len(value_targets),
+            'mean': np.mean(valid_values),
+            'std': np.std(valid_values),
+            'min': np.min(valid_values),
+            'max': np.max(valid_values),
+            'median': np.median(valid_values),
+            'q25': np.percentile(valid_values, 25),
+            'q75': np.percentile(valid_values, 75),
+        }
+        
+        # Value distribution by sign (winning/losing perspective)
+        positive_values = valid_values[valid_values > 0]
+        negative_values = valid_values[valid_values < 0]
+        zero_values = valid_values[valid_values == 0]
+        
+        analysis.update({
+            'positive_count': len(positive_values),
+            'negative_count': len(negative_values),
+            'zero_count': len(zero_values),
+            'positive_ratio': len(positive_values) / len(valid_values) if len(valid_values) > 0 else 0,
+            'negative_ratio': len(negative_values) / len(valid_values) if len(valid_values) > 0 else 0,
+            'zero_ratio': len(zero_values) / len(valid_values) if len(valid_values) > 0 else 0,
+        })
+        
+        if len(positive_values) > 0:
+            analysis['positive_mean'] = np.mean(positive_values)
+            analysis['positive_std'] = np.std(positive_values)
+        
+        if len(negative_values) > 0:
+            analysis['negative_mean'] = np.mean(negative_values)
+            analysis['negative_std'] = np.std(negative_values)
         
         return analysis
     
@@ -318,8 +384,13 @@ class ChessDatasetVisualizer:
             # Calculate effective lengths (non-padded)
             effective_lengths = []
             for seq in sample_inputs:
-                # Find last non-zero token
-                non_zero_positions = np.where(seq != 0)[0]
+                # For 3D inputs, check if any feature is non-zero at each position
+                if len(seq.shape) == 2:  # (seq_len, features)
+                    has_content = np.any(seq != 0, axis=1)  # (seq_len,)
+                    non_zero_positions = np.where(has_content)[0]
+                else:  # 1D sequence
+                    non_zero_positions = np.where(seq != 0)[0]
+                
                 if len(non_zero_positions) > 0:
                     effective_lengths.append(non_zero_positions[-1] + 1)
                 else:
@@ -332,8 +403,13 @@ class ChessDatasetVisualizer:
         
         # 4. Token position heat map
         if len(inputs) > 0:
-            # Average token presence by position
-            token_positions = np.mean(inputs > 0, axis=0)
+            if len(inputs.shape) == 3:
+                # For 3D inputs (batch, seq_len, features), average presence across batch and features
+                token_positions = np.mean(np.mean(inputs > 0, axis=0), axis=1)  # (seq_len,)
+            else:
+                # For 2D inputs (batch, seq_len), average presence across batch
+                token_positions = np.mean(inputs > 0, axis=0)
+            
             x = range(len(token_positions))
             axes[1, 1].bar(x, token_positions, color='orange', alpha=0.7, width=1.0)
             axes[1, 1].set_title('Token Presence by Sequence Position')
@@ -417,6 +493,245 @@ Sparsity: {analysis['mask_sparsity']:.1%}
         plt.tight_layout()
         plt.show()
     
+    def plot_value_target_distribution(self, split: str = "train"):
+        """Plot comprehensive value target analysis."""
+        analysis = self.analyze_value_targets(split)
+        
+        if not analysis or analysis.get('all_nan', False):
+            print(f"No valid value target data found for {split} split")
+            return
+        
+        data = self.train_data if split == "train" else self.test_data
+        value_targets = data.get('value_targets', np.array([]))
+        valid_values = value_targets[~np.isnan(value_targets)]
+        
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        fig.suptitle(f'Value Target Analysis ({split.title()} Set)', fontsize=16)
+        
+        # 1. Value distribution histogram
+        axes[0, 0].hist(valid_values, bins=50, alpha=0.7, color='skyblue', edgecolor='black')
+        axes[0, 0].set_title('Value Target Distribution')
+        axes[0, 0].set_xlabel('Value')
+        axes[0, 0].set_ylabel('Frequency')
+        axes[0, 0].axvline(analysis['mean'], color='red', linestyle='--', 
+                          label=f"Mean: {analysis['mean']:.3f}")
+        axes[0, 0].axvline(analysis['median'], color='orange', linestyle='--', 
+                          label=f"Median: {analysis['median']:.3f}")
+        axes[0, 0].legend()
+        
+        # 2. Box plot for quartile analysis
+        axes[0, 1].boxplot(valid_values, vert=True)
+        axes[0, 1].set_title('Value Target Box Plot')
+        axes[0, 1].set_ylabel('Value')
+        axes[0, 1].grid(True, alpha=0.3)
+        
+        # 3. Sign distribution (win/lose/draw)
+        sign_counts = [analysis['negative_count'], analysis['zero_count'], analysis['positive_count']]
+        sign_labels = ['Negative\\n(Losing)', 'Zero\\n(Draw)', 'Positive\\n(Winning)']
+        colors = ['lightcoral', 'lightgray', 'lightgreen']
+        
+        axes[0, 2].bar(sign_labels, sign_counts, color=colors, alpha=0.8, edgecolor='black')
+        axes[0, 2].set_title('Value Sign Distribution')
+        axes[0, 2].set_ylabel('Count')
+        
+        # Add percentages on bars
+        total = sum(sign_counts)
+        for i, (count, label) in enumerate(zip(sign_counts, sign_labels)):
+            if count > 0:
+                pct = 100 * count / total
+                axes[0, 2].text(i, count + total*0.01, f'{pct:.1f}%', 
+                               ha='center', va='bottom', fontweight='bold')
+        
+        # 4. Value range analysis
+        if analysis['positive_count'] > 0 and analysis['negative_count'] > 0:
+            positive_values = valid_values[valid_values > 0]
+            negative_values = valid_values[valid_values < 0]
+            
+            axes[1, 0].hist([negative_values, positive_values], bins=30, alpha=0.7, 
+                           color=['lightcoral', 'lightgreen'], 
+                           label=['Negative Values', 'Positive Values'],
+                           edgecolor='black')
+            axes[1, 0].set_title('Positive vs Negative Value Distribution')
+            axes[1, 0].set_xlabel('Value')
+            axes[1, 0].set_ylabel('Frequency')
+            axes[1, 0].legend()
+            axes[1, 0].axvline(0, color='black', linestyle='-', alpha=0.5)
+        else:
+            axes[1, 0].hist(valid_values, bins=30, alpha=0.7, color='skyblue', edgecolor='black')
+            axes[1, 0].set_title('Value Distribution (Single Sign)')
+            axes[1, 0].set_xlabel('Value')
+            axes[1, 0].set_ylabel('Frequency')
+        
+        # 5. Data completeness pie chart
+        completeness_data = [analysis['valid_samples'], analysis['nan_count']]
+        completeness_labels = ['Valid Values', 'NaN Values']
+        completeness_colors = ['lightgreen', 'lightcoral']
+        
+        axes[1, 1].pie(completeness_data, labels=completeness_labels, colors=completeness_colors, 
+                       autopct='%1.1f%%', startangle=90)
+        axes[1, 1].set_title('Data Completeness')
+        
+        # 6. Statistics summary text
+        axes[1, 2].axis('off')
+        stats_text = f"""Value Target Statistics:
+        
+Total Samples: {analysis['total_samples']:,}
+Valid Samples: {analysis['valid_samples']:,}
+NaN Values: {analysis['nan_count']:,} ({analysis['nan_ratio']:.1%})
+
+Distribution:
+  • Mean: {analysis['mean']:.4f}
+  • Median: {analysis['median']:.4f}
+  • Std Dev: {analysis['std']:.4f}
+  • Min: {analysis['min']:.4f}
+  • Max: {analysis['max']:.4f}
+  • Q25: {analysis['q25']:.4f}
+  • Q75: {analysis['q75']:.4f}
+
+Sign Analysis:
+  • Positive: {analysis['positive_count']:,} ({analysis['positive_ratio']:.1%})
+  • Negative: {analysis['negative_count']:,} ({analysis['negative_ratio']:.1%})
+  • Zero: {analysis['zero_count']:,} ({analysis['zero_ratio']:.1%})
+        """
+        
+        if analysis['positive_count'] > 0:
+            stats_text += f"\n  • Pos Mean: {analysis['positive_mean']:.4f}"
+            stats_text += f"\n  • Pos Std: {analysis['positive_std']:.4f}"
+        
+        if analysis['negative_count'] > 0:
+            stats_text += f"\n  • Neg Mean: {analysis['negative_mean']:.4f}"
+            stats_text += f"\n  • Neg Std: {analysis['negative_std']:.4f}"
+        
+        axes[1, 2].text(0.1, 0.9, stats_text, transform=axes[1, 2].transAxes, 
+                        fontsize=11, verticalalignment='top', fontfamily='monospace',
+                        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        
+        plt.tight_layout()
+        plt.show()
+    
+    def plot_target_correlation_analysis(self, split: str = "train"):
+        """Analyze correlation between move and value targets."""
+        data = self.train_data if split == "train" else self.test_data
+        move_targets = data.get('move_targets', np.array([]))
+        value_targets = data.get('value_targets', np.array([]))
+        
+        if len(move_targets) == 0 or len(value_targets) == 0:
+            print(f"Missing target data for correlation analysis in {split} split")
+            return
+        
+        # Filter valid samples (both targets present and value not NaN)
+        valid_mask = (move_targets != -100) & (~np.isnan(value_targets))
+        
+        if not valid_mask.any():
+            print(f"No valid samples for correlation analysis in {split} split")
+            return
+        
+        valid_moves = move_targets[valid_mask]
+        valid_values = value_targets[valid_mask]
+        
+        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        fig.suptitle(f'Move-Value Target Correlation Analysis ({split.title()} Set)', fontsize=16)
+        
+        # 1. Move frequency vs average value
+        move_counter = Counter(valid_moves)
+        move_ids, move_counts = zip(*move_counter.most_common(50))  # Top 50 moves
+        
+        # Calculate average value for each move
+        move_avg_values = []
+        for move_id in move_ids:
+            move_mask = valid_moves == move_id
+            avg_value = np.mean(valid_values[move_mask])
+            move_avg_values.append(avg_value)
+        
+        # Color bars by average value
+        bars = axes[0, 0].bar(range(len(move_ids)), move_counts, 
+                             color=plt.cm.RdYlBu_r([0.5 + 0.5 * v / max(abs(min(move_avg_values)), abs(max(move_avg_values))) 
+                                                     for v in move_avg_values]))
+        axes[0, 0].set_title('Top 50 Moves: Frequency vs Average Value')
+        axes[0, 0].set_xlabel('Move Rank')
+        axes[0, 0].set_ylabel('Frequency')
+        
+        # Add colorbar
+        sm = plt.cm.ScalarMappable(cmap=plt.cm.RdYlBu_r, 
+                                   norm=plt.Normalize(vmin=min(move_avg_values), vmax=max(move_avg_values)))
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=axes[0, 0])
+        cbar.set_label('Average Value')
+        
+        # 2. Value distribution by move popularity
+        # Group moves by frequency quartiles
+        move_frequencies = np.array(list(move_counter.values()))
+        q25, q50, q75 = np.percentile(move_frequencies, [25, 50, 75])
+        
+        rare_moves = [mid for mid, count in move_counter.items() if count <= q25]
+        common_moves = [mid for mid, count in move_counter.items() if q25 < count <= q75]
+        frequent_moves = [mid for mid, count in move_counter.items() if count > q75]
+        
+        rare_values = valid_values[np.isin(valid_moves, rare_moves)]
+        common_values = valid_values[np.isin(valid_moves, common_moves)]
+        frequent_values = valid_values[np.isin(valid_moves, frequent_moves)]
+        
+        axes[0, 1].hist([rare_values, common_values, frequent_values], 
+                       bins=30, alpha=0.7, 
+                       label=['Rare Moves (Q1)', 'Common Moves (Q2-Q3)', 'Frequent Moves (Q4)'],
+                       color=['lightcoral', 'lightyellow', 'lightgreen'],
+                       edgecolor='black')
+        axes[0, 1].set_title('Value Distribution by Move Frequency')
+        axes[0, 1].set_xlabel('Value')
+        axes[0, 1].set_ylabel('Frequency')
+        axes[0, 1].legend()
+        axes[0, 1].axvline(0, color='black', linestyle='--', alpha=0.5)
+        
+        # 3. Scatter plot: Move ID vs Value
+        sample_size = min(5000, len(valid_moves))  # Sample for performance
+        sample_indices = np.random.choice(len(valid_moves), sample_size, replace=False)
+        sample_moves = valid_moves[sample_indices]
+        sample_values = valid_values[sample_indices]
+        
+        axes[1, 0].scatter(sample_moves, sample_values, alpha=0.5, s=1, color='blue')
+        axes[1, 0].set_title(f'Move ID vs Value Scatter (Sample of {sample_size:,})')
+        axes[1, 0].set_xlabel('Move ID')
+        axes[1, 0].set_ylabel('Value')
+        axes[1, 0].axhline(0, color='red', linestyle='--', alpha=0.5)
+        axes[1, 0].grid(True, alpha=0.3)
+        
+        # 4. Statistics comparison table
+        axes[1, 1].axis('off')
+        
+        stats_text = f"""Target Correlation Statistics:
+
+Total Valid Samples: {len(valid_moves):,}
+Unique Moves: {len(move_counter):,}
+
+Move Frequency Analysis:
+  • Rarest moves (Q1): {len(rare_moves):,} moves, ≤{q25} occurrences
+  • Common moves (Q2-Q3): {len(common_moves):,} moves, {q25+1}-{q75} occurrences  
+  • Most frequent (Q4): {len(frequent_moves):,} moves, >{q75} occurrences
+
+Value Statistics by Move Frequency:
+Rare Moves:
+  • Count: {len(rare_values):,}
+  • Mean Value: {np.mean(rare_values):.4f}
+  • Std Value: {np.std(rare_values):.4f}
+
+Common Moves:
+  • Count: {len(common_values):,}
+  • Mean Value: {np.mean(common_values):.4f}
+  • Std Value: {np.std(common_values):.4f}
+
+Frequent Moves:
+  • Count: {len(frequent_values):,}
+  • Mean Value: {np.mean(frequent_values):.4f}
+  • Std Value: {np.std(frequent_values):.4f}
+        """
+        
+        axes[1, 1].text(0.05, 0.95, stats_text, transform=axes[1, 1].transAxes, 
+                        fontsize=10, verticalalignment='top', fontfamily='monospace',
+                        bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
+        
+        plt.tight_layout()
+        plt.show()
+    
     def show_sample_data(self, split: str = "train", n_samples: int = 5):
         """Show sample input/target pairs."""
         data = self.train_data if split == "train" else self.test_data
@@ -430,7 +745,7 @@ Sparsity: {analysis['mask_sparsity']:.1%}
             print(f"No data found for {split} split")
             return
         
-        print(f"\n🎯 Sample Data ({split.title()} Set):")
+        print(f"\nSample Data ({split.title()} Set):")
         print("=" * 80)
         
         n_samples = min(n_samples, len(inputs))
@@ -465,7 +780,7 @@ Sparsity: {analysis['mask_sparsity']:.1%}
     
     def validate_dataset_integrity(self):
         """Validate dataset integrity and format."""
-        print("\n🔍 Dataset Validation:")
+        print("\nDataset Validation:")
         print("=" * 50)
         
         issues = []
@@ -481,7 +796,7 @@ Sparsity: {analysis['mask_sparsity']:.1%}
             for file_type in required_files:
                 if file_type in data:
                     array = data[file_type]
-                    print(f"  ✅ {file_type}: {array.shape} {array.dtype}")
+                    print(f"  [OK] {file_type}: {array.shape} {array.dtype}")
                     
                     # Check for anomalies
                     if file_type == "move_targets":
@@ -500,7 +815,7 @@ Sparsity: {analysis['mask_sparsity']:.1%}
                         if len(array.shape) == 2 and array.shape[1] != expected_actions:
                             issues.append(f"{split}: move mask action count mismatch ({array.shape[1]} vs {expected_actions})")
                 else:
-                    print(f"  ❌ {file_type}: MISSING")
+                    print(f"  [MISSING] {file_type}")
                     issues.append(f"{split}: missing {file_type}")
         
         # Check data consistency
@@ -520,11 +835,11 @@ Sparsity: {analysis['mask_sparsity']:.1%}
                 issues.append(f"{split}: inconsistent array lengths: {lengths}")
         
         if issues:
-            print(f"\n⚠️  Issues Found:")
+            print(f"\n[WARNING] Issues Found:")
             for issue in issues:
                 print(f"  - {issue}")
         else:
-            print(f"\n✅ Dataset validation passed!")
+            print(f"\n[OK] Dataset validation passed!")
     
     def generate_report(self):
         """Generate comprehensive dataset report."""
@@ -541,7 +856,7 @@ Sparsity: {analysis['mask_sparsity']:.1%}
         # Analysis for both splits
         for split in ["train", "test"]:
             if (split == "train" and self.train_data) or (split == "test" and self.test_data):
-                print(f"\n📈 {split.title()} Split Analysis:")
+                print(f"\n{split.title()} Split Analysis:")
                 print("-" * 40)
                 
                 # Position analysis
@@ -562,6 +877,17 @@ Sparsity: {analysis['mask_sparsity']:.1%}
                 if mask_analysis:
                     print(f"  Avg valid moves per position: {mask_analysis['avg_valid_moves']:.1f}")
                     print(f"  Move mask sparsity: {mask_analysis['mask_sparsity']:.1%}")
+                
+                # Value target analysis
+                value_analysis = self.analyze_value_targets(split)
+                if value_analysis and not value_analysis.get('all_nan', False):
+                    print(f"  Value targets: {value_analysis['valid_samples']:,} valid ({value_analysis['nan_ratio']:.1%} NaN)")
+                    print(f"  Value range: [{value_analysis['min']:.3f}, {value_analysis['max']:.3f}]")
+                    print(f"  Value distribution: {value_analysis['positive_ratio']:.1%} pos, {value_analysis['zero_ratio']:.1%} zero, {value_analysis['negative_ratio']:.1%} neg")
+                elif value_analysis:
+                    print(f"  Value targets: All NaN values")
+                else:
+                    print(f"  Value targets: Not found")
         
         # Sample data
         self.show_sample_data("train", 3)
@@ -605,6 +931,11 @@ def main():
                 # New: move mask plots
                 if f'possible_moves' in (visualizer.train_data if split == "train" else visualizer.test_data):
                     visualizer.plot_move_mask_statistics(split)
+                
+                # New: value target plots
+                if f'value_targets' in (visualizer.train_data if split == "train" else visualizer.test_data):
+                    visualizer.plot_value_target_distribution(split)
+                    visualizer.plot_target_correlation_analysis(split)
 
 
 if __name__ == "__main__":

@@ -85,6 +85,11 @@ def main():
                         # New: plot move mask statistics
                         if 'possible_moves' in visualizer.train_data:
                             visualizer.plot_move_mask_statistics("train")
+                        
+                        # New: plot value target analysis
+                        if 'value_targets' in visualizer.train_data:
+                            visualizer.plot_value_target_distribution("train")
+                            visualizer.plot_target_correlation_analysis("train")
                     
                     if visualizer.test_data:
                         print("  📈 Plotting test data...")
@@ -94,6 +99,11 @@ def main():
                         # New: plot move mask statistics
                         if 'possible_moves' in visualizer.test_data:
                             visualizer.plot_move_mask_statistics("test")
+                        
+                        # New: plot value target analysis
+                        if 'value_targets' in visualizer.test_data:
+                            visualizer.plot_value_target_distribution("test")
+                            visualizer.plot_target_correlation_analysis("test")
                             
             except KeyboardInterrupt:
                 print("\nSkipping plots.")

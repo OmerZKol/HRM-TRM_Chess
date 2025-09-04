@@ -18,9 +18,9 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 import wandb
 
-from models.hrm.hrm_act_v1 import HierarchicalReasoningModel_ACTV1
-from models.losses import ACTLossHead
-from models.sparse_embedding import CastedSparseEmbeddingSignSGD_Distributed
+from HRM_model.models.hrm.hrm_act_v1 import HierarchicalReasoningModel_ACTV1
+from HRM_model.models.losses import ACTLossHead
+from HRM_model.models.sparse_embedding import CastedSparseEmbeddingSignSGD_Distributed
 from chess_puzzle_dataset import ChessPuzzleDataset, ChessPuzzleDatasetConfig
 
 def get_parameter_count(model: torch.nn.Module) -> int:
@@ -94,7 +94,7 @@ class ChessTrainer:
         
         # Mixed precision
         if config.mixed_precision:
-            self.scaler = torch.cuda.amp.GradScaler()
+            self.scaler = torch.amp.GradScaler('cuda')
         else:
             self.scaler = None
     
@@ -104,7 +104,8 @@ class ChessTrainer:
             # Required HRM config
             "batch_size": self.config.global_batch_size,
             "seq_len": self.dataset_info["seq_len"],
-            "vocab_size": self.dataset_info["vocab_size"],
+            # "vocab_size": self.dataset_info["vocab_size"],
+            "vocab_size": 512,  # Dummy vocab size, not used with chess tokenization
             "num_puzzle_identifiers": 1,  # Group games by puzzle ID
             
             # Architecture
@@ -115,7 +116,8 @@ class ChessTrainer:
             "hidden_size": 512,
             "num_heads": 8,
             "expansion": 4.0,
-            "pos_encodings": "rope",
+            # "pos_encodings": "rope",
+            'pos_encodings': 'learned_2d',  # Custom 2D positional encoding
             
             # ACT config
             "halt_max_steps": 8,
@@ -137,7 +139,10 @@ class ChessTrainer:
             "puzzle_emb_ndim": 512,
             
             # Training dtype
-            "forward_dtype": "bfloat16"
+            "forward_dtype": "bfloat16",
+
+            "board_x": 8,
+            "board_y": 8
         }
         self.model_config = model_config
         
@@ -404,9 +409,35 @@ class ChessTrainer:
                 # Log metrics
                 if self.config.rank == 0:
                     if self.step % self.config.print_interval == 0:
-                        print(f"Step {self.step}: Loss={metrics['loss']:.4f}, "
-                              f"Move Acc={metrics.get('move_accuracy', 0)}/{metrics.get('move_count', 1)} "
-                              f"({100*metrics.get('move_accuracy', 0)/max(metrics.get('move_count', 1), 1):.1f}%)")
+                        # Calculate move accuracy percentage
+                        move_acc_pct = 100 * metrics.get('move_accuracy', 0) / max(metrics.get('move_count', 1), 1)
+                        
+                        # Build log message with additional info
+                        log_parts = [
+                            f"Step {self.step}:",
+                            f"Loss={metrics['loss']:.4f}",
+                            f"Value Loss={metrics.get('value_loss', 0):.4f}",
+                            f"Move Loss={metrics.get('move_loss', 0):.4f}",
+                            f"q_halt_loss={metrics.get('q_halt_loss', 0):.4f}",
+                            f"Move Acc={metrics.get('move_accuracy', 0)}/{metrics.get('move_count', 1)} ({move_acc_pct:.1f}%)",
+                            f"Grad Norm={metrics['grad_norm']:.4f}",
+                        ]
+                        
+                        # Add value loss if available
+                        if 'value_loss' in metrics:
+                            log_parts.append(f"Value Loss={metrics['value_loss']:.4f}")
+                        
+                        # Add self-loop information if available
+                        if 'avg_self_loops' in metrics:
+                            log_parts.append(f"Avg Self-loops={metrics['avg_self_loops']:.2f}")
+                        elif 'total_self_loops' in metrics:
+                            log_parts.append(f"Total Self-loops={metrics['total_self_loops']}")
+                        
+                        # Add halt steps if available (ACT-related metric)
+                        if 'avg_halt_steps' in metrics:
+                            log_parts.append(f"Avg Halt Steps={metrics['avg_halt_steps']:.2f}")
+                        
+                        print(", ".join(log_parts))
                     
                     if self.use_wandb and self.step % 10 == 0:
                         wandb.log(metrics, step=self.step)

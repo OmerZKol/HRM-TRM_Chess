@@ -39,6 +39,7 @@ class ChessPuzzleDataset(PuzzleDataset):
             "labels": "r",
             "move_targets": "r",  # Move prediction targets
             "possible_moves": "r",  # Keep possible moves in memory for masking
+            "value_targets": "r",  # Value prediction targets
 
             # Keep indices in memory
             "puzzle_identifiers": None,
@@ -82,7 +83,8 @@ class ChessPuzzleDataset(PuzzleDataset):
                 "labels": IGNORE_LABEL_ID,
                 "move_targets": IGNORE_LABEL_ID,
                 "puzzle_identifiers": self.metadata.blank_identifier_id,
-                "possible_moves": 0.0  # Pad with zeros (no valid moves)
+                "possible_moves": 0.0,  # Pad with zeros (no valid moves)
+                "value_targets": IGNORE_LABEL_ID
             }
             batch = {k: np.pad(v, ((0, pad_size), ) + ((0, 0), ) * (v.ndim - 1), constant_values=pad_values.get(k, 0)) for k, v in batch.items()}
 
@@ -127,6 +129,10 @@ class ChessPuzzleDataset(PuzzleDataset):
                 # Add move targets if available
                 if "move_targets" in dataset:
                     batch_data["move_targets"] = dataset["move_targets"][local_start: local_end]
+
+                # Add value targets if available
+                if "value_targets" in dataset:
+                    batch_data["value_targets"] = dataset["value_targets"][local_start: local_end]
                 
                 # Add possible moves if available
                 if "possible_moves" in dataset:
@@ -182,10 +188,13 @@ class ChessPuzzleDataset(PuzzleDataset):
                 # Add move targets if available
                 if "move_targets" in dataset:
                     batch_data["move_targets"] = dataset["move_targets"][batch_indices]
-                
+
+                # Add value targets if available
+                if "value_targets" in dataset:
+                    batch_data["value_targets"] = dataset["value_targets"][batch_indices]
+
                 # Add possible moves if available
                 if "possible_moves" in dataset:
                     batch_data["possible_moves"] = dataset["possible_moves"][batch_indices]
                 batch = self._collate_batch(batch_data)
-
                 yield set_name, batch, global_effective_batch_size

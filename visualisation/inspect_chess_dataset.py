@@ -94,6 +94,24 @@ def inspect_chess_dataset(dataset_path: str):
                     unique_puzzles = len(np.unique(array))
                     print(f"      Unique puzzles: {unique_puzzles}")
                 
+                elif field_name == "value_targets":
+                    # Value target analysis
+                    valid_values = array[~np.isnan(array)]
+                    nan_count = np.sum(np.isnan(array))
+                    print(f"      Valid values: {len(valid_values)} ({100*len(valid_values)/array.size:.1f}%)")
+                    print(f"      NaN values: {nan_count} ({100*nan_count/array.size:.1f}%)")
+                    
+                    if len(valid_values) > 0:
+                        print(f"      Range: [{np.min(valid_values):.3f}, {np.max(valid_values):.3f}]")
+                        print(f"      Mean: {np.mean(valid_values):.3f}")
+                        print(f"      Std: {np.std(valid_values):.3f}")
+                        
+                        # Sign distribution
+                        positive = np.sum(valid_values > 0)
+                        negative = np.sum(valid_values < 0)
+                        zero = np.sum(valid_values == 0)
+                        print(f"      Sign distribution: {positive} pos, {zero} zero, {negative} neg")
+                
                 elif field_name in ["labels", "puzzle_indices", "group_indices"]:
                     if array.size > 0:
                         print(f"      Range: [{np.min(array)}, {np.max(array)}]")
@@ -138,7 +156,8 @@ def inspect_chess_dataset(dataset_path: str):
             "all__puzzle_identifiers.npy",
             "all__puzzle_indices.npy",
             "all__group_indices.npy",
-            "all__possible_moves.npy"  # New: move masks
+            "all__possible_moves.npy",  # New: move masks
+            "all__value_targets.npy"    # New: value targets
         ]
         
         missing_files = []
@@ -164,7 +183,7 @@ def inspect_chess_dataset(dataset_path: str):
         
         # Check shape consistency
         main_arrays = ["all__inputs.npy", "all__labels.npy", "all__move_targets.npy", 
-                       "all__puzzle_identifiers.npy", "all__possible_moves.npy"]
+                       "all__puzzle_identifiers.npy", "all__possible_moves.npy", "all__value_targets.npy"]
         main_shapes = {k: v for k, v in array_shapes.items() if k in main_arrays}
         
         if len(set(main_shapes.values())) > 1:

@@ -11,29 +11,8 @@ import argparse
 import numpy as np
 import torch
 from typing import List, Tuple, Dict, Optional
-from dataclasses import dataclass
 from tqdm import tqdm
 import chess
-
-# Simple chess move encoding without external dependencies
-SQUARES = [f"{file}{rank}" for rank in "12345678" for file in "abcdefgh"]
-SQUARE_TO_IDX = {square: i for i, square in enumerate(SQUARES)}
-IDX_TO_SQUARE = {i: square for i, square in enumerate(SQUARES)}
-
-# Piece symbols
-PIECES = "PNBRQK"
-PIECE_TO_IDX = {piece: i for i, piece in enumerate(PIECES)}
-
-@dataclass
-class ChessPosition:
-    """Simplified chess position representation."""
-    board: str  # FEN-like board representation
-    to_move: str  # 'w' or 'b'
-    castling: str  # Castling rights
-    ep_square: Optional[str]  # En passant square
-    halfmove: int
-    fullmove: int
-
 
 class ChessMoveEncoder:
     """Encodes chess moves as integers for HRM training."""
@@ -236,7 +215,7 @@ def calculate_position_value(result_str: str, move_index: int, total_moves: int,
     elif result_str == "0-1":  # Black wins
         final_value = -1.0
     elif result_str == "1/2-1/2":  # Draw
-        final_value = 0.0
+        final_value = 1e-2
     else:
         final_value = 0.0  # Default for unknown results
     
@@ -336,11 +315,20 @@ def create_position_encoding(board_history: List[chess.Board], seq_len: int = 64
         # En Passant Information (1 feature)
         ep_square = current_board.ep_square
         square_info.append(1 if ep_square is not None and square == ep_square else 0)
-        
-        # Repetition Information (8 features) - simplified
-        # For now, set all to 0 (would need full game history to detect repetitions)
-        for _ in range(8):
-            square_info.append(0)
+
+        # Repetition Information (8 features) - detect position repetitions
+        # Check if current position appeared in recent history (last 8 positions)
+        current_fen_base = current_board.fen().split(' ')[0]  # Just piece positions, ignore move counters
+        repetition_flags = []
+        for hist_idx in range(8):
+            if hist_idx < len(board_history):
+                hist_board = board_history[-(hist_idx + 1)]
+                hist_fen_base = hist_board.fen().split(' ')[0]
+                # Mark 1 if this historical position matches current position
+                repetition_flags.append(1 if hist_fen_base == current_fen_base and hist_idx > 0 else 0)
+            else:
+                repetition_flags.append(0)
+        square_info.extend(repetition_flags)
         
         # Rule50 Counter (1 feature)
         rule50_value = min(current_board.halfmove_clock / 100.0, 1.0)  # Normalize to [0,1]
