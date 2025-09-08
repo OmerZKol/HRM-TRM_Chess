@@ -1,12 +1,12 @@
 # WandB
-/wandb/
+old_implementation/wandb/
 # checkpoints
-/checkpoints/
+old_implementation/checkpoints/
 # cache
-/cache/
+old_implementation/cache/
 # data
-/data/
-/outputs/
+old_implementation/data/
+old_implementation/outputs/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -14,6 +14,12 @@ __pycache__/
 .vscode/
 # C extensions
 *.so
+
+# Downloaded lczero training data - adjust paths as needed
+lczero-training/data/training-run1--20250209-1017/
+lczero-training/data/training-run3--20210605-0521/
+lczero-training/data/
+lczero-training/not_my_models
 
 # Distribution / packaging
 .Python
