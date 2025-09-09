@@ -46,7 +46,6 @@ class HRMAlphaZeroBridge(nn.Module):
             'move_targets': torch.full((batch_size,), -100, dtype=torch.long, device=boards.device),
             'value_targets': torch.full((batch_size,), float('nan'), dtype=torch.float, device=boards.device),
         }
-        
         # Initialize carry state
         carry = self.hrm_model.initial_carry(batch)
         
@@ -71,7 +70,8 @@ class HRMAlphaZeroBridge(nn.Module):
         q_info["q_continue_logits"] = outputs['q_continue_logits']
         if "target_q_continue" in outputs:
             q_info["target_q_continue"] = outputs["target_q_continue"]
-        return pi, v, q_info
+        moves_left = outputs["moves_left_logits"]
+        return pi, v, moves_left, q_info
 
     def train(self, mode=True):
         """Override train to ensure HRM model is also in train mode."""
@@ -91,30 +91,6 @@ class SimpleHRMLoss:
     Simplified loss functions that work with HRM outputs.
     Mimics AlphaZero loss but handles HRM's raw logit outputs.
     """
-    
-    # @staticmethod
-    # def loss_pi(targets, outputs):
-    #     """
-    #     Policy loss for HRM outputs.
-    #     targets: probability distribution [batch_size, action_size]
-    #     outputs: raw logits [batch_size, action_size]
-    #     """
-    #     # Convert logits to log probabilities
-    #     log_probs = F.log_softmax(outputs, dim=1)
-    #     # Cross-entropy with target probabilities
-    #     return -torch.mean(torch.sum(targets * log_probs, dim=1))
-    
-    # @staticmethod
-    # def loss_v(targets, outputs):
-    #     """
-    #     Value loss for HRM outputs.
-    #     targets: target values [batch_size]
-    #     outputs: predicted values [batch_size, 1]
-    #     """
-    #     # Apply tanh to raw outputs to get [-1, 1] range
-    #     predictions = torch.tanh(outputs.view(-1))
-    #     return F.mse_loss(predictions, targets)
-
     @staticmethod
     def loss_pi(targets, outputs):
         # Use HRM-compatible loss for log probabilities
@@ -147,6 +123,9 @@ class SimpleHRMLoss:
             # For Othello: move_targets is policy distribution, move_preds is log probabilities
             # Get the actual move from the target policy (argmax of the policy distribution)
             target_moves = torch.argmax(move_targets, dim=-1)
+            mask = move_targets >= 0
+            move_preds = move_preds.clone()
+            move_preds[~mask] = -1e9  # Mask illegal moves
             predicted_moves = torch.argmax(move_preds, dim=-1)
             
             # Handle value predictions - convert to scalar if needed  
@@ -189,3 +168,42 @@ class SimpleHRMLoss:
             return q_continue_loss
         else:
             return torch.tensor(0.0, device=q_info["q_continue_logits"].device)
+
+    @staticmethod
+    def loss_ml(target_moves_left, pred_moves_left):
+        """Huber loss for moves left prediction"""
+        scale = 20.0
+        ml_target_scaled = target_moves_left / scale
+        ml_output_scaled = pred_moves_left / scale
+        
+        return F.huber_loss(ml_output_scaled, ml_target_scaled, delta=10.0/scale)
+
+    @staticmethod
+    def calculate_move_accuracy(policy_targets, policy_outputs):
+        """
+        Calculate move prediction accuracy.
+        
+        Args:
+            policy_targets: Target policy distribution [batch_size, action_size]  
+            policy_outputs: Predicted policy logits [batch_size, action_size]
+            
+        Returns:
+            accuracy: Fraction of correctly predicted moves
+        """
+        with torch.no_grad():
+            # Get the target move (highest probability move)
+            target_moves = torch.argmax(policy_targets, dim=-1)
+
+            mask = policy_targets >= 0
+            move_preds = policy_outputs.clone()
+
+            move_preds[~mask] = -1e9  # Mask illegal moves
+            # Get the predicted move (highest logit move)  
+            predicted_moves = torch.argmax(move_preds, dim=-1)
+
+            # Calculate accuracy
+            correct_predictions = (predicted_moves == target_moves)
+            accuracy = correct_predictions.float().mean()
+            
+            return accuracy
+        

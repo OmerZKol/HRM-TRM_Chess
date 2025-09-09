@@ -27,33 +27,41 @@ class ChessNNet(nn.Module):
         hrm_config = {
             'batch_size': self.batch_size,
             'seq_len': self.board_x * self.board_y,  # Treat each board square as a token
-            'puzzle_emb_ndim': 0,  # No puzzle embeddings for Chess
-            'num_puzzle_identifiers': 1,
-            'vocab_size': 3, # placeholder tbh
-            
+            'use_chess_tokenization': True,  # Use chess-specific tokenization
+
             # Optimized reasoning layers for better learning
-            'H_cycles': 1,  
-            'L_cycles': 1,  
-            'H_layers': 2,  # Reduced from 3 for faster convergence
-            'L_layers': 2,  # Reduced from 3 for faster convergence
+            'H_cycles': 2,  
+            'L_cycles': 2,  
+            'H_layers': 2,
+            'L_layers': 2,
             
             # Optimized model size for board games
-            'hidden_size': 128,  # Reduced from 256
+            'hidden_size': 256,  # Reduced hidden size for efficiency
             'expansion': 2.0,    
             'num_heads': 8,  # Increased for better attention
-            'pos_encodings': 'learned_2d',  # Custom 2D positional encoding
-            
-            # Minimal ACT (almost no adaptive computation)
-            'halt_max_steps': 8,  # Force single step for deterministic output
-            'halt_exploration_prob': 0.1,  # No exploration
+            'pos_encodings': 'rope',  # Custom 2D positional encoding
+
+            # How many steps the model can take
+            'halt_max_steps': 1,  # Force single step for deterministic output
+            'halt_exploration_prob': 0.0,  # Some exploration
             
             # Enable move and value prediction for AlphaZero
             'use_move_prediction': True,
             'num_actions': self.action_size,
             'move_prediction_from_token': 0,  # Use first board position
+            # Enable attention-based policy
+            'use_attention_policy': True,  # Use attention policy instead of direct logits
             
             'use_value_prediction': True,
             'value_prediction_from_token': 0,  # Use first board position
+            
+            'use_moves_left_prediction': True,
+            'moves_left_from_token': 0,  # Use first board position
+            
+            # Enable TensorFlow-style heads for better spatial processing
+            'use_tensorflow_style_heads': True,
+            'value_embedding_size': 32,
+            'moves_embedding_size': 8,
             
             'forward_dtype': 'bfloat16',
             
@@ -68,9 +76,7 @@ class ChessNNet(nn.Module):
 
     def forward(self, s):
         # Use the bridge to handle HRM conversion
-        pi, v, q_info = self.bridge(s)
-        if self.training:
-            return F.log_softmax(pi, dim=1), torch.tanh(v), q_info
+        pi, v, moves_left, q_info = self.bridge(s)
 
         # Return in AlphaZero format: log probabilities and tanh values
-        return F.log_softmax(pi, dim=1), torch.tanh(v)
+        return F.log_softmax(pi, dim=1), torch.tanh(v), moves_left, q_info

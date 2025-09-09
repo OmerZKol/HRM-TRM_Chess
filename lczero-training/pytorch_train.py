@@ -15,8 +15,9 @@ import argparse
 import yaml
 import os
 from simple_chess_nn import ChessLoss, SimpleChessNet
-from model.HRMBridge import HRMAlphaZeroBridge, SimpleHRMLoss
 from model.ChessNNet import ChessNNet
+from torch.utils.tensorboard import SummaryWriter
+from parameter_tracker import save_parameter_snapshot, analyze_parameter_health, compute_parameter_changes, load_parameter_snapshot
 # Training record version constants (from chunkparser.py)
 V6_VERSION = struct.pack('i', 6)
 V5_VERSION = struct.pack('i', 5)
@@ -250,7 +251,7 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: ChessLoss,
     """Evaluate model on validation set"""
     model.eval()
     total_losses = {'policy_loss': 0, 'value_loss': 0, 'moves_left_loss': 0, 
-                   'reg_loss': 0, 'total_loss': 0}
+                   'reg_loss': 0, 'total_loss': 0, "move_accuracy": 0, 'q_loss': 0}
     num_batches = 0
 
     with torch.no_grad():
@@ -260,38 +261,33 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: ChessLoss,
             value_target = value_target.to(device)
             ml_target = ml_target.to(device)
 
-            # compute output with mixed precision for FlashAttention compatibility
-            with torch.autocast(device_type=device.type, dtype=torch.float16):
+            # for HRM model, compute output with mixed precision for FlashAttention compatibility
+            if(criterion.model_type == "hrm"):
+                with torch.autocast(device_type=device.type, dtype=torch.float16):
+                    model_output = model(planes)
+            else:
                 model_output = model(planes)
-                policy_output, value_output = model_output
-            # Create dummy q_output dictionary for models without Q output
-            # The q_halt_logits should match the batch size for binary classification
-            batch_size = value_output.size(0)
-            q_output = {
-                "q_halt_logits": torch.zeros(batch_size, device=value_output.device), 
-                "q_continue_logits": torch.zeros_like(value_output),
-                "target_q_continue": torch.zeros_like(value_output)
-            }
-            l_pi = SimpleHRMLoss.loss_pi(policy_target, policy_output)
-            l_v = SimpleHRMLoss.loss_v(value_target, value_output)
-            l_q_halt = SimpleHRMLoss.loss_q_halt(policy_target, policy_output, value_target, value_output, q_output)
-            l_q_continue = SimpleHRMLoss.loss_q_continue(q_output)
-            q_loss = 0.5 * (l_q_halt + l_q_continue)
-            total_loss = l_pi + l_v + q_loss
+            
+            policy_output, value_output, moves_left_output, q_output = model_output
+
+            # Calculate loss
+            total_loss, loss_dict = criterion(policy_target, policy_output, 
+                                  value_target, value_output,
+                                  ml_target, moves_left_output,
+                                  q_output, model)
             
             # Accumulate losses
-            total_losses['policy_loss'] += l_pi.item()
-            total_losses['value_loss'] += l_v.item()
-            total_losses['q_halt_loss'] = l_q_halt.item()
-            total_losses['q_continue_loss'] = l_q_continue.item()
-            total_losses['q_loss'] = q_loss.item()
-            # total_losses['moves_left_loss'] += ml_loss.item()
-            # total_losses['reg_loss'] += reg_loss.item()
-            total_losses['total_loss'] += total_loss.item()
+            total_losses['policy_loss'] += loss_dict['policy_loss']
+            total_losses['value_loss'] += loss_dict['value_loss']
+            total_losses['moves_left_loss'] += loss_dict['moves_left_loss']
+            total_losses['reg_loss'] += loss_dict['reg_loss']
+            total_losses['q_loss'] += loss_dict['q_loss']
+            total_losses['total_loss'] += loss_dict['total_loss']
+            total_losses['move_accuracy'] += loss_dict['policy_accuracy']
 
             num_batches += 1
 
-    # Average losses
+    # Average losses and accuracy
     for key in total_losses:
         total_losses[key] /= num_batches
 
@@ -303,7 +299,8 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
     model.train()
     
     total_losses = {'policy_loss': 0, 'value_loss': 0, 'moves_left_loss': 0, 
-                   'reg_loss': 0, 'total_loss': 0}
+                   'reg_loss': 0, 'q_halt_loss': 0, 'q_continue_loss': 0, 'q_loss': 0,
+                    'total_loss': 0, 'move_accuracy': 0}
     num_batches = 0
     
     for batch_idx, (planes, policy_target, value_target, best_q_target, ml_target) in enumerate(dataloader):
@@ -315,39 +312,38 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
         optimizer.zero_grad()
         
         # # Forward pass - assuming model returns (policy_logits, value_logits, moves_left)
-        # policy_output, value_output, ml_output = model(planes)
         
-        # # Calculate loss
-        # loss, loss_dict = criterion(policy_target, policy_output, 
-        #                           value_target, value_output,
-        #                           ml_target, ml_output, model)
         # compute output with mixed precision for FlashAttention compatibility
-        with torch.autocast(device_type=device.type, dtype=torch.float16):
+        if(criterion.model_type == "hrm"):
+            with torch.autocast(device_type=device.type, dtype=torch.float16):
+                model_output = model(planes)
+        else:
             model_output = model(planes)
-            policy_output, value_output, q_output = model_output
-        l_pi = SimpleHRMLoss.loss_pi(policy_target, policy_output)
-        l_v = SimpleHRMLoss.loss_v(value_target, value_output)
-        l_q_halt = SimpleHRMLoss.loss_q_halt(policy_target, policy_output, value_target, value_output, q_output)
-        l_q_continue = SimpleHRMLoss.loss_q_continue(q_output)
-        q_loss = 0.5 * (l_q_halt + l_q_continue)
-        total_loss = l_pi + l_v + q_loss
-
+        policy_output, value_output, moves_left_output, q_output = model_output
+        
+        # Calculate loss
+        total_loss, loss_dict = criterion(policy_target, policy_output, 
+                                  value_target, value_output,
+                                  ml_target, moves_left_output,
+                                  q_output, model)
+        
         # Backward pass
         total_loss.backward()
         optimizer.step()
         
         # Accumulate losses
-        total_losses['policy_loss'] += l_pi.item()
-        total_losses['value_loss'] += l_v.item()
-        total_losses['q_halt_loss'] = l_q_halt.item()
-        total_losses['q_continue_loss'] = l_q_continue.item()
-        total_losses['q_loss'] = q_loss.item()
-        # total_losses['moves_left_loss'] += ml_loss.item()
-        # total_losses['reg_loss'] += reg_loss.item()
-        total_losses['total_loss'] += total_loss.item()
+        total_losses['policy_loss'] += loss_dict['policy_loss']
+        total_losses['value_loss'] += loss_dict['value_loss']
+        total_losses['moves_left_loss'] += loss_dict['moves_left_loss']
+        total_losses['q_halt_loss'] += loss_dict['q_halt_loss']
+        total_losses['q_continue_loss'] += loss_dict['q_continue_loss']
+        total_losses['q_loss'] += loss_dict['q_loss']
+        total_losses['reg_loss'] += loss_dict['reg_loss']
+        total_losses['total_loss'] += loss_dict['total_loss']
+        total_losses['move_accuracy'] += loss_dict['policy_accuracy']
         num_batches += 1
     
-    # Average losses
+    # Average losses and accuracy
     for key in total_losses:
         total_losses[key] /= num_batches
         
@@ -389,8 +385,9 @@ def load_model(args, device):
             return model.to(device)
 
     return ChessNNet((8,8), 1858).to(device)
+    # return SimpleChessNet().to(device)
 
-def save_model(model, args, epoch, losses):
+def save_model(model, optimizer, scheduler, args, epoch, losses):
     """Save model with training info"""
     if args.save_path:
         save_path = args.save_path
@@ -401,6 +398,8 @@ def save_model(model, args, epoch, losses):
     # Save model state and training info
     save_dict = {
         'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict(),
         'epoch': epoch,
         'losses': losses,
         'model_type': args.model_type,
@@ -414,7 +413,7 @@ def main():
     parser = argparse.ArgumentParser(description='PyTorch Chess Training')
     parser.add_argument('--data-path', type=str, required=False,
                        help='Path to training data chunks')
-    parser.add_argument('--batch-size', type=int, default=32,
+    parser.add_argument('--batch-size', type=int, default=64,
                        help='Batch size for training')
     parser.add_argument('--epochs', type=int, default=100,
                        help='Number of training epochs')
@@ -462,7 +461,7 @@ def main():
         print("No chunk files found! Use --test flag to run with dummy data.")
         return
 
-    chunk_files = chunk_files[:20]
+    # chunk_files = chunk_files[:100]
 
     train_split = int(0.9 * len(chunk_files)) # 90% for training, 10% for validation
 
@@ -479,10 +478,34 @@ def main():
     criterion = ChessLoss(
         policy_weight=config.get('policy_loss_weight', 1.0),
         value_weight=config.get('value_loss_weight', 1.0), 
-        moves_left_weight=config.get('moves_left_loss_weight', 0.01)
+        moves_left_weight=config.get('moves_left_loss_weight', 0.01),
+        model_type="hrm"
+        # model_type="simple"
     )
+    for param in model.parameters():
+        param.requires_grad = True
+        # print(param.shape, param.dtype)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    
+    # Add learning rate scheduler - cosine annealing with warm restarts
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer, T_0=10, T_mult=2, eta_min=args.lr/100
+    )
+    
+    # Initialize TensorBoard writer
+    log_dir = f"runs/chess_training_{torch.cuda.get_device_name() if torch.cuda.is_available() else 'cpu'}"
+    writer = SummaryWriter(log_dir=log_dir)
+    print(f'TensorBoard logs will be saved to: {log_dir}')
+    
+    # Initialize parameter tracking
+    param_snapshot_dir = "parameter_snapshots"
+    os.makedirs(param_snapshot_dir, exist_ok=True)
+    print(f'Parameter snapshots will be saved to: {param_snapshot_dir}')
+    
+    # Save initial parameter snapshot (epoch 0)
+    save_parameter_snapshot(model, 0, param_snapshot_dir)
+    prev_snapshot = None
     
     # Training loop
     for epoch in range(args.epochs):
@@ -490,9 +513,56 @@ def main():
         
         losses = train_epoch(model, train_dataloader, criterion, optimizer, device)
         
-        print(f'Average Losses:')
+        # Step the learning rate scheduler
+        scheduler.step()
+        current_lr = scheduler.get_last_lr()[0]
+        
+        print(f'Average Losses (LR: {current_lr:.2e}):')
         for key, value in losses.items():
             print(f'  {key}: {value:.6f}')
+        
+        # Log training metrics to TensorBoard
+        for key, value in losses.items():
+            writer.add_scalar(f'Train/{key}', value, epoch)
+        writer.add_scalar('Learning_Rate', current_lr, epoch)
+        
+        # Save parameter snapshot every epoch
+        snapshot_file = save_parameter_snapshot(model, epoch + 1, param_snapshot_dir)
+        
+        # Analyze parameter health
+        health_metrics = analyze_parameter_health(model)
+        
+        # Log parameter health metrics to TensorBoard
+        for param_name, metrics in health_metrics.items():
+            writer.add_scalar(f'Params/{param_name}/norm', metrics['norm'], epoch)
+            writer.add_scalar(f'Params/{param_name}/grad_norm', metrics['grad_norm'], epoch)
+            writer.add_scalar(f'Params/{param_name}/zero_fraction', metrics['zero_fraction'], epoch)
+            
+            # Log any NaN or Inf issues
+            if metrics['has_nan'] or metrics['has_inf']:
+                print(f"WARNING: Parameter {param_name} has NaN or Inf values!")
+            if metrics['grad_has_nan'] or metrics['grad_has_inf']:
+                print(f"WARNING: Gradient for {param_name} has NaN or Inf values!")
+        
+        # Compute and log parameter changes if we have a previous snapshot
+        if prev_snapshot is not None:
+            curr_snapshot = load_parameter_snapshot(snapshot_file)
+            param_changes = compute_parameter_changes(prev_snapshot, curr_snapshot)
+            
+            for param_name, changes in param_changes.items():
+                writer.add_scalar(f'Changes/{param_name}/l2_change', changes['l2_change'], epoch)
+                writer.add_scalar(f'Changes/{param_name}/relative_change', changes['relative_change'], epoch)
+                writer.add_scalar(f'Changes/{param_name}/max_abs_change', changes['max_abs_change'], epoch)
+            
+            # Print summary of largest parameter changes
+            largest_changes = sorted(param_changes.items(), 
+                                   key=lambda x: x[1]['relative_change'], reverse=True)[:3]
+            print("Largest parameter changes:")
+            for param_name, changes in largest_changes:
+                print(f"  {param_name}: {changes['relative_change']:.6f} (relative)")
+        
+        # Load current snapshot for next iteration
+        prev_snapshot = load_parameter_snapshot(snapshot_file) if os.path.exists(snapshot_file) else None
         
         if args.test and epoch >= 2:  # Only run a few epochs in test mode
             print("Test completed successfully!")
@@ -504,8 +574,18 @@ def main():
             for key, value in eval_losses.items():
                 print(f'  {key}: {value:.6f}')
             
+            # Log validation metrics to TensorBoard
+            for key, value in eval_losses.items():
+                writer.add_scalar(f'Validation/{key}', value, epoch)
+            
             # Save model checkpoint
-            save_model(model, args, epoch, losses)
+            # save_model(model, optimizer, scheduler, args, epoch, losses)
+
+    # Close TensorBoard writer
+    writer.close()
+    print(f"Training completed. View logs with: tensorboard --logdir {log_dir}")
+    print(f"Parameter snapshots saved to: {param_snapshot_dir}")
+    print(f"To visualize parameter evolution, run: python visualize_parameters.py --snapshot-dir {param_snapshot_dir}")
 
 if __name__ == '__main__':
     main()

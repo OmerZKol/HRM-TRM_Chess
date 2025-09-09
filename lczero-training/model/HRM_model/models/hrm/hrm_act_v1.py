@@ -10,6 +10,8 @@ from pydantic import BaseModel
 from model.HRM_model.models.common import trunc_normal_init_
 from model.HRM_model.models.layers import rms_norm, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedEmbedding, CastedLinear
 from model.HRM_model.models.sparse_embedding import CastedSparseEmbedding
+from model.attention_policy_map import AttentionPolicyHead
+from model.tensorflow_style_heads import TensorFlowStyleValueHead, TensorFlowStyleMovesLeftHead
 
 
 @dataclass
@@ -31,13 +33,9 @@ class HierarchicalReasoningModel_ACTV1Carry:
 class HierarchicalReasoningModel_ACTV1Config(BaseModel):
     batch_size: int
     seq_len: int
-    puzzle_emb_ndim: int = 0
-    num_puzzle_identifiers: int
-    vocab_size: int
 
     H_cycles: int
     L_cycles: int
-
     H_layers: int
     L_layers: int
 
@@ -62,6 +60,9 @@ class HierarchicalReasoningModel_ACTV1Config(BaseModel):
     # Value prediction config (NEW)
     use_value_prediction: bool = True
     value_prediction_from_token: int = 0  # Which token position to use for value prediction
+
+    use_moves_left_prediction: bool = True
+    moves_left_from_token: int = 0  # Which token position to use for moves left prediction
     
     # Chess tokenization config (NEW)
     use_chess_tokenization: bool = True
@@ -74,6 +75,14 @@ class HierarchicalReasoningModel_ACTV1Config(BaseModel):
     # From tfprocess.py
     arc_encoding: bool = True
     pos_enc_dim: int = 16
+    
+    # Policy head type
+    use_attention_policy: bool = False  # Use attention-based policy instead of direct
+    
+    # Head architecture types
+    use_tensorflow_style_heads: bool = False  # Use TensorFlow-style value/moves heads
+    value_embedding_size: int = 32  # Value head embedding size
+    moves_embedding_size: int = 8   # Moves left head embedding size
 
     forward_dtype: str = "bfloat16"
 
@@ -154,36 +163,61 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         self.forward_dtype = getattr(torch, self.config.forward_dtype)
 
         # I/O
-        self.embed_scale  = math.sqrt(self.config.hidden_size)
-        embed_init_std = 1.0 / self.embed_scale
-
-        self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
-        self.lm_head      = CastedLinear(self.config.hidden_size, self.config.vocab_size, bias=False)
-        self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True)
+        self.q_head = CastedLinear(self.config.hidden_size, 2, bias=True)
         
-        # Move prediction head (NEW)
+        # Move prediction head
         if self.config.use_move_prediction:
-            self.move_head = CastedLinear(self.config.hidden_size, self.config.num_actions, bias=True)
-            # AlphaZero-style initialization for policy head
-            with torch.no_grad():
-                self.move_head.weight.normal_(0, 0.1)
-                if self.move_head.bias is not None:
-                    self.move_head.bias.zero_()
+            if self.config.use_attention_policy:
+                # Use attention-based policy head
+                self.move_head = AttentionPolicyHead(self.config.hidden_size, self.config.num_heads)
+            else:
+                # Use direct policy head
+                self.move_head = CastedLinear(self.config.hidden_size, self.config.num_actions, bias=True)
+                # AlphaZero-style initialization for policy head
+                with torch.no_grad():
+                    self.move_head.weight.normal_(0, 0.1)
+                    if self.move_head.bias is not None:
+                        self.move_head.bias.zero_()
         
-        # Value prediction head (NEW)
+        # Value prediction head
         if self.config.use_value_prediction:
-            # 3 for WDL style output
-            self.value_head = CastedLinear(self.config.hidden_size, 3, bias=True)  # Single value output
-            # AlphaZero-style initialization for value head
-            with torch.no_grad():
-                self.value_head.weight.normal_(0, 0.1)
-                if self.value_head.bias is not None:
-                    self.value_head.bias.zero_()
+            if self.config.use_tensorflow_style_heads:
+                # Use TensorFlow-style value head that processes all spatial information
+                self.value_head = TensorFlowStyleValueHead(
+                    hidden_size=self.config.hidden_size,
+                    embedding_size=self.config.value_embedding_size,
+                    use_wdl=True
+                )
+            else:
+                # Original single-token value head
+                # 3 for WDL style output
+                self.value_head = CastedLinear(self.config.hidden_size, 3, bias=True)
+                # AlphaZero-style initialization for value head
+                with torch.no_grad():
+                    self.value_head.weight.normal_(0, 0.1)
+                    if self.value_head.bias is not None:
+                        self.value_head.bias.zero_()
+        
+        # Moves left prediction head
+        if self.config.use_moves_left_prediction:
+            if self.config.use_tensorflow_style_heads:
+                # Use TensorFlow-style moves left head that processes all spatial information
+                self.moves_left_head = TensorFlowStyleMovesLeftHead(
+                    hidden_size=self.config.hidden_size,
+                    embedding_size=self.config.moves_embedding_size
+                )
+            else:
+                # Original single-token moves left head
+                self.moves_left_head = CastedLinear(self.config.hidden_size, 1, bias=True)
+                with torch.no_grad():
+                    self.moves_left_head.weight.normal_(0, 0.1)
+                    if self.moves_left_head.bias is not None:
+                        self.moves_left_head.bias.zero_()
 
-        # Chess square tokenization (NEW)
+        # Chess square tokenization
         if self.config.use_chess_tokenization:
             if self.config.arc_encoding:
-                # From tfprocess.py
+                # Same as in tfprocess.py
                 self.pos_enc = nn.Parameter(torch.randn(self.config.board_x * self.config.board_y, self.config.pos_enc_dim, dtype=self.forward_dtype) * 0.02)
                 self.square_projection = CastedLinear(self.config.square_feature_dim + self.config.pos_enc_dim, self.config.hidden_size, bias=True)
                 self.input_gate = ma_gating(self.config.hidden_size)
@@ -210,25 +244,10 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
                     self.square_pos_offsets.normal_(0, 0.02)
                     self.square_pos_scales.normal_(1.0, 0.02)
 
-        # LM Blocks
         if self.config.pos_encodings == "rope":
             self.rotary_emb = RotaryEmbedding(dim=self.config.hidden_size // self.config.num_heads,
-                                              max_position_embeddings=self.config.seq_len,
+                                              max_position_embeddings=64,
                                               base=self.config.rope_theta)
-        elif self.config.pos_encodings == "learned":
-            self.embed_pos = CastedEmbedding(self.config.seq_len, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
-        elif self.config.pos_encodings == "learned_2d":
-            # 2D positional encoding for board games
-            if hasattr(self.config, 'board_x') and hasattr(self.config, 'board_y'):
-                self.embed_pos_2d = self._create_2d_positional_encoding(
-                    self.config.board_x, self.config.board_y, 
-                    self.config.hidden_size, embed_init_std
-                )
-            else:
-                # Fallback to regular learned embeddings
-                self.embed_pos = CastedEmbedding(self.config.seq_len, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
-        else:
-            raise NotImplementedError()
 
         # Reasoning Layers
         self.H_level = HierarchicalReasoningModel_ACTV1ReasoningModule(layers=[HierarchicalReasoningModel_ACTV1Block(self.config) for _i in range(self.config.H_layers)])
@@ -243,39 +262,6 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         with torch.no_grad():
             self.q_head.weight.zero_()
             self.q_head.bias.fill_(-5)  # type: ignore
-
-    def _create_2d_positional_encoding(self, board_x, board_y, hidden_size, init_std):
-        """Create 2D positional encodings for board games."""
-        import math
-        
-        # Create positional encoding matrix
-        pe = torch.zeros(board_x * board_y, hidden_size, dtype=self.forward_dtype)
-        
-        # Use sinusoidal encoding like in transformers but for 2D coordinates
-        half_dim = hidden_size // 2
-        div_term_x = torch.exp(torch.arange(0, half_dim, 2).float() * (-math.log(10000.0) / half_dim))
-        div_term_y = torch.exp(torch.arange(0, half_dim, 2).float() * (-math.log(10000.0) / half_dim))
-        
-        for i in range(board_x):
-            for j in range(board_y):
-                pos_idx = i * board_y + j
-                
-                # X position encoding (first quarter of dimensions)
-                quarter = hidden_size // 4
-                pe[pos_idx, 0:quarter:2] = torch.sin(i * div_term_x[:quarter//2])
-                pe[pos_idx, 1:quarter:2] = torch.cos(i * div_term_x[:quarter//2])
-                
-                # Y position encoding (second quarter of dimensions)  
-                pe[pos_idx, quarter:2*quarter:2] = torch.sin(j * div_term_y[:quarter//2])
-                pe[pos_idx, quarter+1:2*quarter:2] = torch.cos(j * div_term_y[:quarter//2])
-                
-                # Remaining dimensions get learned embeddings
-                if 2*quarter < hidden_size:
-                    pe[pos_idx, 2*quarter:] = torch.randn(hidden_size - 2*quarter) * init_std
-        
-        # Register as buffer so it moves with the model but doesn't get gradients
-        self.register_buffer('pos_encoding_2d', pe)
-        return pe
 
     def _input_embeddings(self, input: torch.Tensor, puzzle_identifiers: torch.Tensor):
         original_shape = input.shape
@@ -331,21 +317,6 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
                 
                 # Apply positional encoding: embedding * scale + offset
                 embedding = embedding * pos_scales + pos_offsets
-
-        # Position embeddings (only for non-chess tokenization)
-        if self.config.pos_encodings == "learned" and not self.config.use_chess_tokenization:
-            # scale by 1/sqrt(2) to maintain forward variance
-            embedding = 0.707106781 * (embedding + self.embed_pos.embedding_weight.to(self.forward_dtype))
-        elif self.config.pos_encodings == "learned_2d" and not self.config.use_chess_tokenization:
-            # Apply 2D positional encoding for board positions
-            # Only apply to the board positions (skip puzzle embedding positions)
-            board_positions = embedding[:, :, :]  # [batch, seq_len, hidden_size]
-            board_positions = board_positions + self.pos_encoding_2d.unsqueeze(0)  # Add 2D pos encodings
-            embedding = board_positions
-
-        # Scale (only if not using chess tokenization, which has its own scaling)
-        if not self.config.use_chess_tokenization:
-            embedding = self.embed_scale * embedding
             
         return embedding
 
@@ -387,26 +358,46 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
 
         # LM Outputs
         new_carry = HierarchicalReasoningModel_ACTV1InnerCarry(z_H=z_H.detach(), z_L=z_L.detach())  # New carry no grad
-        output = self.lm_head(z_H)[:, :]
 
         # Q head
         q_logits = self.q_head(z_H[:, 0]).to(torch.float32)
         
         # Move prediction outputs (NEW)
         move_logits = None
+        self.attention_weights = None
         if self.config.use_move_prediction:
-            # Use specified token position for move prediction (default: first token after puzzle embedding)
-            move_token_idx = self.config.move_prediction_from_token
-            move_logits = self.move_head(z_H[:, move_token_idx]).to(torch.float32)
+            if self.config.use_attention_policy:
+                # Use attention-based policy: pass all square representations
+                move_logits, self.attention_weights = self.move_head(z_H)
+                move_logits = move_logits.to(torch.float32)
+            else:
+                # Use direct policy: use specified token position 
+                move_token_idx = self.config.move_prediction_from_token
+                move_logits = self.move_head(z_H[:, move_token_idx]).to(torch.float32)
         
         # Value prediction outputs (NEW)
         value_logits = None
         if self.config.use_value_prediction:
-            # Use specified token position for value prediction (default: first token after puzzle embedding)
-            value_token_idx = self.config.value_prediction_from_token
-            value_logits = self.value_head(z_H[:, value_token_idx]).squeeze(-1).to(torch.float32)  # Remove last dimension
+            if self.config.use_tensorflow_style_heads:
+                # TensorFlow-style: pass all spatial information
+                value_logits = self.value_head(z_H).to(torch.float32)  # [batch, 3] WDL format
+            else:
+                # Original: use specified token position for value prediction (default: first token after puzzle embedding)
+                value_token_idx = self.config.value_prediction_from_token
+                value_logits = self.value_head(z_H[:, value_token_idx]).squeeze(-1).to(torch.float32)  # Remove last dimension
         
-        return new_carry, output, (q_logits[..., 0], q_logits[..., 1]), move_logits, value_logits
+        # Moves left prediction outputs (NEW)
+        moves_left_logits = None
+        if self.config.use_moves_left_prediction:
+            if self.config.use_tensorflow_style_heads:
+                # TensorFlow-style: pass all spatial information
+                moves_left_logits = self.moves_left_head(z_H).to(torch.float32)  # [batch, 1]
+            else:
+                # Original: use specified token position for moves left prediction (default: first token after puzzle embedding)
+                moves_left_token_idx = self.config.moves_left_from_token
+                moves_left_logits = self.moves_left_head(z_H[:, moves_left_token_idx]).to(torch.float32)
+
+        return new_carry, (q_logits[..., 0], q_logits[..., 1]), move_logits, value_logits, moves_left_logits
 
 
 class HierarchicalReasoningModel_ACTV1(nn.Module):
@@ -416,10 +407,6 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
         super().__init__()
         self.config = HierarchicalReasoningModel_ACTV1Config(**config_dict)
         self.inner = HierarchicalReasoningModel_ACTV1_Inner(self.config)
-
-    @property
-    def puzzle_emb(self):
-        return self.inner.puzzle_emb
 
     def initial_carry(self, batch: Dict[str, torch.Tensor]):
         batch_size = batch["inputs"].shape[0]
@@ -443,15 +430,19 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
 
         # Forward inner model
         inner_result = self.inner(new_inner_carry, new_current_data)
-        new_inner_carry, logits, (q_halt_logits, q_continue_logits), move_logits, value_logits = inner_result[:5]
+        new_inner_carry, (q_halt_logits, q_continue_logits), move_logits, value_logits, moves_left_logits = inner_result[:5]
 
         outputs = {
-            "logits": logits,
             "q_halt_logits": q_halt_logits,
             "q_continue_logits": q_continue_logits,
             "move_logits": move_logits,
             "value_logits": value_logits,
+            "moves_left_logits": moves_left_logits,
         }
+        
+        # Add attention weights if using attention policy
+        if hasattr(self.inner, 'attention_weights') and self.inner.attention_weights is not None:
+            outputs["attention_weights"] = self.inner.attention_weights
         
         with torch.no_grad():
             # Step
@@ -476,7 +467,7 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
                 # As batch_size is large, there're many parallel envs.
                 # Similar concept as PQN https://arxiv.org/abs/2407.04811
                 next_inner_result = self.inner(new_inner_carry, new_current_data)
-                next_q_halt_logits, next_q_continue_logits = next_inner_result[2]
+                next_q_halt_logits, next_q_continue_logits = next_inner_result[1]
                 
                 outputs["target_q_continue"] = torch.sigmoid(torch.where(is_last_step, next_q_halt_logits, torch.maximum(next_q_halt_logits, next_q_continue_logits)))
 

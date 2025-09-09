@@ -135,29 +135,6 @@ class Attention(nn.Module):
         attn_output = attn_output.view(batch_size, seq_len, self.output_size)  # type: ignore
         return self.o_proj(attn_output)
 
-        # # Transpose for attention: [bs, num_heads, seq_len, head_dim]
-        # query = query.transpose(1, 2)
-        # key = key.transpose(1, 2)
-        # value = value.transpose(1, 2)
-
-        # # Repeat key and value if using grouped query attention
-        # if self.num_key_value_heads != self.num_heads:
-        #     key = key.repeat_interleave(self.num_heads // self.num_key_value_heads, dim=1)
-        #     value = value.repeat_interleave(self.num_heads // self.num_key_value_heads, dim=1)
-
-        #  # Scaled dot-product attention
-        # attn_output = F.scaled_dot_product_attention(
-        #     query, key, value, 
-        #     is_causal=self.causal,
-        #     scale=1.0 / (self.head_dim ** 0.5)
-        # )
-
-        # # Transpose back: [bs, seq_len, num_heads, head_dim]
-        # attn_output = attn_output.transpose(1, 2)
-        # attn_output = attn_output.contiguous().view(batch_size, seq_len, self.output_size)
-        
-        # return self.o_proj(attn_output)
-
 class SwiGLU(nn.Module):
     def __init__(self, hidden_size: int, expansion: float):
         super().__init__()

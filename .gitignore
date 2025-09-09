@@ -7,6 +7,9 @@ old_implementation/cache/
 # data
 old_implementation/data/
 old_implementation/outputs/
+lczero-training/ATTENTION_POLICY_IMPLEMENTATION.md
+lczero-training/test_attention_policy.py
+lczero-training/plots
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
