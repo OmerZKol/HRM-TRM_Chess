@@ -437,7 +437,7 @@ def main():
         print("No chunk files found! Use --test flag to run with dummy data.")
         return
 
-    chunk_files = chunk_files[:20]
+    # chunk_files = chunk_files[:20]
 
     train_split = int(0.9 * len(chunk_files)) # 90% for training, 10% for validation
 
@@ -473,10 +473,10 @@ def main():
     writer = SummaryWriter(log_dir=log_dir)
     print(f'TensorBoard logs will be saved to: {log_dir}')
     
-    # Initialize parameter tracking
-    param_snapshot_dir = "parameter_snapshots"
-    os.makedirs(param_snapshot_dir, exist_ok=True)
-    print(f'Parameter snapshots will be saved to: {param_snapshot_dir}')
+    # # Initialize parameter tracking
+    # param_snapshot_dir = "parameter_snapshots"
+    # os.makedirs(param_snapshot_dir, exist_ok=True)
+    # print(f'Parameter snapshots will be saved to: {param_snapshot_dir}')
 
     # Training loop
     for epoch in range(config.get('epochs')):
@@ -513,8 +513,8 @@ def main():
     # Close TensorBoard writer
     writer.close()
     print(f"Training completed. View logs with: tensorboard --logdir {log_dir}")
-    print(f"Parameter snapshots saved to: {param_snapshot_dir}")
-    print(f"To visualize parameter evolution, run: python visualize_parameters.py --snapshot-dir {param_snapshot_dir}")
+    # print(f"Parameter snapshots saved to: {param_snapshot_dir}")
+    # print(f"To visualize parameter evolution, run: python visualize_parameters.py --snapshot-dir {param_snapshot_dir}")
 
 if __name__ == '__main__':
     main()
