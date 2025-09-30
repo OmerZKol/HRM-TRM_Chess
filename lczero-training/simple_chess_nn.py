@@ -59,13 +59,14 @@ class ChessLoss(nn.Module):
     """Combined loss function for chess training (adapted from tfprocess.py)"""
     
     def __init__(self, policy_weight: float = 1.0, value_weight: float = 1.0, 
-                 moves_left_weight: float = 0.01, reg_weight: float = 1e-4, model_type: str = "simple"):
+                 moves_left_weight: float = 0.01, reg_weight: float = 1e-4, config=None):
         super().__init__()
         self.policy_weight = policy_weight
         self.value_weight = value_weight
         self.moves_left_weight = moves_left_weight
         self.reg_weight = reg_weight
-        self.model_type = model_type
+        self.config = config
+        self.model_type = config.get('model_type')
         
     def policy_loss(self, policy_targets: torch.Tensor, policy_outputs: torch.Tensor) -> torch.Tensor:
         """Policy cross-entropy loss with illegal move masking"""
@@ -187,12 +188,13 @@ class ChessLoss(nn.Module):
                      self.moves_left_weight * ml_loss + 
                      reg_loss)
         
-        # add in q losses for hrm
-        if(self.model_type == "hrm"):
-            q_halt_loss = self.loss_q_halt(policy_targets, policy_outputs, value_targets, value_outputs, q_info)
-            q_continue_loss = self.loss_q_continue(q_info)
-            q_loss = 0.5 * (q_halt_loss + q_continue_loss)
-            total_loss += q_loss
+        # add in q losses for hrm, if the halt_max_steps is set > 1
+        if self.config.get('model_type') == "hrm":
+            if self.config.get('hrm_config').get('halt_max_steps') > 1:
+                q_halt_loss = self.loss_q_halt(policy_targets, policy_outputs, value_targets, value_outputs, q_info)
+                q_continue_loss = self.loss_q_continue(q_info)
+                q_loss = 0.5 * (q_halt_loss + q_continue_loss)
+                total_loss += q_loss
         
         # Return loss components for logging
         loss_dict = {
@@ -207,9 +209,10 @@ class ChessLoss(nn.Module):
             'q_loss': 0.0
         }
 
-        if(self.model_type == "hrm"):
-            loss_dict['q_halt_loss'] = q_halt_loss.item()
-            loss_dict['q_continue_loss'] = q_continue_loss.item()
-            loss_dict['q_loss'] = q_loss.item()
+        if self.config.get('model_type') == "hrm":
+            if self.config.get('hrm_config').get('halt_max_steps') > 1:
+                loss_dict['q_halt_loss'] = q_halt_loss.item()
+                loss_dict['q_continue_loss'] = q_continue_loss.item()
+                loss_dict['q_loss'] = q_loss.item()
             
         return total_loss, loss_dict

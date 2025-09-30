@@ -16,8 +16,9 @@ import yaml
 import os
 from simple_chess_nn import ChessLoss, SimpleChessNet
 from model.ChessNNet import ChessNNet
+from transformer_chess_nn import TransformerChessNet
 from torch.utils.tensorboard import SummaryWriter
-from parameter_tracker import save_parameter_snapshot, analyze_parameter_health, compute_parameter_changes, load_parameter_snapshot
+
 # Training record version constants (from chunkparser.py)
 V6_VERSION = struct.pack('i', 6)
 V5_VERSION = struct.pack('i', 5)
@@ -349,7 +350,7 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
         
     return total_losses
 
-def load_model(args, device):
+def load_model(args, config, device):
     """Load model based on command line arguments"""
     
     # If model path is provided, try to load it
@@ -357,8 +358,8 @@ def load_model(args, device):
         if args.model_path.endswith('.pth'):
             print(f"Loading PyTorch model from {args.model_path}")
             checkpoint = torch.load(args.model_path, map_location=device)
-            
-            if args.model_type == 'simple':
+
+            if config.get("model_type") == 'simple':
                 model = SimpleChessNet()
                 # Handle both direct state_dict and nested checkpoint format
                 if 'model_state_dict' in checkpoint:
@@ -367,27 +368,16 @@ def load_model(args, device):
                 else:
                     model.load_state_dict(checkpoint)
             else:
-                model = ChessNNet((8,8), 1858)
+                model = ChessNNet(config, (8,8))
             return model.to(device)
-            
-        else:
-            return ChessNNet((8,8), 1858)
-    
-    # Default path - check for models in not_my_models directory
-    default_model_path = "/home/omerz/projects/ChessTypeBeat/lczero-training/not_my_models"
-    if os.path.exists(default_model_path):
-        pth_files = glob.glob(os.path.join(default_model_path, "*.pth"))
-        
-        if pth_files:
-            print(f"Found PyTorch model: {pth_files[0]}")
-            model = SimpleChessNet()
-            model.load_state_dict(torch.load(pth_files[0], map_location=device))
-            return model.to(device)
+    if(config.get("model_type") == "simple"):
+        return SimpleChessNet().to(device)
+    if(config.get("model_type") == "hrm"):
+        return ChessNNet(config, (8,8)).to(device)
+    if(config.get("model_type") == "transformer"):
+        return TransformerChessNet((8,8), 1858).to(device)
 
-    return ChessNNet((8,8), 1858).to(device)
-    # return SimpleChessNet().to(device)
-
-def save_model(model, optimizer, scheduler, args, epoch, losses):
+def save_model(model, optimizer, scheduler, config, args, epoch, losses):
     """Save model with training info"""
     if args.save_path:
         save_path = args.save_path
@@ -402,7 +392,7 @@ def save_model(model, optimizer, scheduler, args, epoch, losses):
         'scheduler_state_dict': scheduler.state_dict(),
         'epoch': epoch,
         'losses': losses,
-        'model_type': args.model_type,
+        'model_type': config.get("model_type"),
         'model_class': model.__class__.__name__
     }
     
@@ -411,27 +401,16 @@ def save_model(model, optimizer, scheduler, args, epoch, losses):
 
 def main():
     parser = argparse.ArgumentParser(description='PyTorch Chess Training')
-    parser.add_argument('--data-path', type=str, required=False,
+    parser.add_argument('--data-path', type=str, required=False, default="data/training-run3--20210605-0521",
                        help='Path to training data chunks')
-    parser.add_argument('--batch-size', type=int, default=64,
-                       help='Batch size for training')
-    parser.add_argument('--epochs', type=int, default=100,
-                       help='Number of training epochs')
-    parser.add_argument('--lr', type=float, default=1e-4,
-                       help='Learning rate')
     parser.add_argument('--config', type=str,
                        help='YAML config file path')
     parser.add_argument('--device', type=str, default='cuda',
                        help='Device to use for training')
-    parser.add_argument('--test', action='store_true',
-                       help='Run a quick test with sample data')
     parser.add_argument('--model-path', type=str,
-                       help='Path to existing PyTorch model (.pth) or TensorFlow model (.pb)')
+                       help='Path to existing PyTorch model (.pth)')
     parser.add_argument('--save-path', type=str,
-                       help='Path to save trained model (.pth)')
-    parser.add_argument('--model-type', type=str, default='hrm',
-                       choices=['simple', 'custom', 'hrm'], 
-                       help='Type of model to use (simple for built-in test model)')  
+                       help='Path to save trained model (.pth)') 
     
     args = parser.parse_args()
     
@@ -446,13 +425,10 @@ def main():
     print(f'Using device: {device}')
     
     # Initialize model
-    model = load_model(args, device)
+    model = load_model(args, config, device)
     print(f'Model parameters: {sum(p.numel() for p in model.parameters()):,}')
-
-    # Use default data path if not provided
-    if not args.data_path:
-        args.data_path = "data/training-run3--20210605-0521"
-        
+    
+    print(args.data_path)
     # Get chunk files
     chunk_files = glob.glob(os.path.join(args.data_path, "*.gz"))
     print(f'Found {len(chunk_files)} chunk files in {args.data_path}')
@@ -461,15 +437,15 @@ def main():
         print("No chunk files found! Use --test flag to run with dummy data.")
         return
 
-    # chunk_files = chunk_files[:100]
+    chunk_files = chunk_files[:20]
 
     train_split = int(0.9 * len(chunk_files)) # 90% for training, 10% for validation
 
     train_dataset = ChessDataset(chunk_files[:train_split], sample_rate=config.get('sample_rate', 0))  # Use higher sampling for speed
     valid_dataset = ChessDataset(chunk_files[train_split:], sample_rate=config.get('sample_rate', 0))
-    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size,
+    train_dataloader = DataLoader(train_dataset, batch_size=config.get('batch_size', 64),
                             shuffle=True, num_workers=0, pin_memory=False)
-    test_dataloader = DataLoader(valid_dataset, batch_size=args.batch_size, 
+    test_dataloader = DataLoader(valid_dataset, batch_size=config.get('batch_size', 64), 
                             shuffle=False, num_workers=0, pin_memory=False)
 
     print(f'Training dataset size: {len(train_dataset)}')
@@ -479,22 +455,21 @@ def main():
         policy_weight=config.get('policy_loss_weight', 1.0),
         value_weight=config.get('value_loss_weight', 1.0), 
         moves_left_weight=config.get('moves_left_loss_weight', 0.01),
-        model_type="hrm"
-        # model_type="simple"
+        config=config
     )
     for param in model.parameters():
         param.requires_grad = True
         # print(param.shape, param.dtype)
-    
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=config.get('lr', 0.0001))
+    print(f'Optimizer: Adam with lr={config.get("lr", 0.0001)}')
     # Add learning rate scheduler - cosine annealing with warm restarts
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        optimizer, T_0=10, T_mult=2, eta_min=args.lr/100
+        optimizer, T_0=10, T_mult=2, eta_min=config.get('lr', 0.0001)/100
     )
     
     # Initialize TensorBoard writer
-    log_dir = f"runs/chess_training_{torch.cuda.get_device_name() if torch.cuda.is_available() else 'cpu'}"
+    log_dir = f"runs/chess_training_{config.get('name')}"
     writer = SummaryWriter(log_dir=log_dir)
     print(f'TensorBoard logs will be saved to: {log_dir}')
     
@@ -502,14 +477,10 @@ def main():
     param_snapshot_dir = "parameter_snapshots"
     os.makedirs(param_snapshot_dir, exist_ok=True)
     print(f'Parameter snapshots will be saved to: {param_snapshot_dir}')
-    
-    # Save initial parameter snapshot (epoch 0)
-    save_parameter_snapshot(model, 0, param_snapshot_dir)
-    prev_snapshot = None
-    
+
     # Training loop
-    for epoch in range(args.epochs):
-        print(f'\nEpoch {epoch+1}/{args.epochs}')
+    for epoch in range(config.get('epochs')):
+        print(f'\nEpoch {epoch+1}/{config.get('epochs')}')
         
         losses = train_epoch(model, train_dataloader, criterion, optimizer, device)
         
@@ -526,49 +497,7 @@ def main():
             writer.add_scalar(f'Train/{key}', value, epoch)
         writer.add_scalar('Learning_Rate', current_lr, epoch)
         
-        # Save parameter snapshot every epoch
-        snapshot_file = save_parameter_snapshot(model, epoch + 1, param_snapshot_dir)
-        
-        # Analyze parameter health
-        health_metrics = analyze_parameter_health(model)
-        
-        # Log parameter health metrics to TensorBoard
-        for param_name, metrics in health_metrics.items():
-            writer.add_scalar(f'Params/{param_name}/norm', metrics['norm'], epoch)
-            writer.add_scalar(f'Params/{param_name}/grad_norm', metrics['grad_norm'], epoch)
-            writer.add_scalar(f'Params/{param_name}/zero_fraction', metrics['zero_fraction'], epoch)
-            
-            # Log any NaN or Inf issues
-            if metrics['has_nan'] or metrics['has_inf']:
-                print(f"WARNING: Parameter {param_name} has NaN or Inf values!")
-            if metrics['grad_has_nan'] or metrics['grad_has_inf']:
-                print(f"WARNING: Gradient for {param_name} has NaN or Inf values!")
-        
-        # Compute and log parameter changes if we have a previous snapshot
-        if prev_snapshot is not None:
-            curr_snapshot = load_parameter_snapshot(snapshot_file)
-            param_changes = compute_parameter_changes(prev_snapshot, curr_snapshot)
-            
-            for param_name, changes in param_changes.items():
-                writer.add_scalar(f'Changes/{param_name}/l2_change', changes['l2_change'], epoch)
-                writer.add_scalar(f'Changes/{param_name}/relative_change', changes['relative_change'], epoch)
-                writer.add_scalar(f'Changes/{param_name}/max_abs_change', changes['max_abs_change'], epoch)
-            
-            # Print summary of largest parameter changes
-            largest_changes = sorted(param_changes.items(), 
-                                   key=lambda x: x[1]['relative_change'], reverse=True)[:3]
-            print("Largest parameter changes:")
-            for param_name, changes in largest_changes:
-                print(f"  {param_name}: {changes['relative_change']:.6f} (relative)")
-        
-        # Load current snapshot for next iteration
-        prev_snapshot = load_parameter_snapshot(snapshot_file) if os.path.exists(snapshot_file) else None
-        
-        if args.test and epoch >= 2:  # Only run a few epochs in test mode
-            print("Test completed successfully!")
-            break
-        
-        if(epoch % 10 == 0):
+        if(epoch % 2 == 0):
             eval_losses = evaluate(model, test_dataloader, criterion, device)
             print(f'Validation Losses:')
             for key, value in eval_losses.items():
@@ -579,7 +508,7 @@ def main():
                 writer.add_scalar(f'Validation/{key}', value, epoch)
             
             # Save model checkpoint
-            # save_model(model, optimizer, scheduler, args, epoch, losses)
+            save_model(model, optimizer, scheduler, config, args, epoch, losses)
 
     # Close TensorBoard writer
     writer.close()

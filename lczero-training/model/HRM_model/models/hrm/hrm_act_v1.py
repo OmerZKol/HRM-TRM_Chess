@@ -31,7 +31,6 @@ class HierarchicalReasoningModel_ACTV1Carry:
 
 
 class HierarchicalReasoningModel_ACTV1Config(BaseModel):
-    batch_size: int
     seq_len: int
 
     H_cycles: int
