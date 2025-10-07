@@ -10,6 +10,7 @@ Hierarchical Reasoning Model (HRM) adapted for chess. Trains models on Leela Che
 ```bash
 cd lczero-training
 ```
+- This project requires Python 3.12.3
 ### Requirements
 install dependencies:
 ```bash
