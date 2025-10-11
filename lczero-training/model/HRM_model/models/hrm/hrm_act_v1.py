@@ -114,7 +114,7 @@ def ma_gating(hidden_size: int):
 
 
 class HierarchicalReasoningModel_ACTV1Block(nn.Module):
-    def __init__(self, config: HierarchicalReasoningModel_ACTV1Config) -> None:
+    def __init__(self, config: HierarchicalReasoningModel_ACTV1Config, layer_idx: int = 0, total_layers: int = 1) -> None:
         super().__init__()
 
         self.self_attn = Attention(
@@ -130,20 +130,25 @@ class HierarchicalReasoningModel_ACTV1Block(nn.Module):
         )
         self.norm_eps = config.rms_norm_eps
 
+        # Residual scaling for deep networks (helps gradient flow)
+        # Scale decreases with depth to prevent gradient explosion
+        self.residual_scale = (total_layers / (layer_idx + 1)) ** 0.5 if total_layers > 1 else 1.0
+
     def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
-        # Post Norm
-        # Self Attention
-        hidden_states = rms_norm(hidden_states + self.self_attn(cos_sin=cos_sin, hidden_states=hidden_states), variance_epsilon=self.norm_eps)
-        # Fully Connected
-        hidden_states = rms_norm(hidden_states + self.mlp(hidden_states), variance_epsilon=self.norm_eps)
+        # Pre-Norm (better gradient flow for deep networks)
+        # Self Attention with residual scaling
+        hidden_states = hidden_states + self.residual_scale * self.self_attn(cos_sin=cos_sin, hidden_states=rms_norm(hidden_states, variance_epsilon=self.norm_eps))
+        # Fully Connected with residual scaling
+        hidden_states = hidden_states + self.residual_scale * self.mlp(rms_norm(hidden_states, variance_epsilon=self.norm_eps))
         return hidden_states
 
 
 class HierarchicalReasoningModel_ACTV1ReasoningModule(nn.Module):
-    def __init__(self, layers: List[HierarchicalReasoningModel_ACTV1Block]):
+    def __init__(self, layers: List[HierarchicalReasoningModel_ACTV1Block], norm_eps: float = 1e-5):
         super().__init__()
 
         self.layers = torch.nn.ModuleList(layers)
+        self.norm_eps = norm_eps
 
     def forward(self, hidden_states: torch.Tensor, input_injection: torch.Tensor, **kwargs) -> torch.Tensor:
         # Input injection (add)
@@ -151,6 +156,9 @@ class HierarchicalReasoningModel_ACTV1ReasoningModule(nn.Module):
         # Layers
         for layer in self.layers:
             hidden_states = layer(hidden_states=hidden_states, **kwargs)
+
+        # Final norm (standard for pre-norm architectures)
+        hidden_states = rms_norm(hidden_states, variance_epsilon=self.norm_eps)
 
         return hidden_states
 
@@ -248,13 +256,20 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
                                               max_position_embeddings=64,
                                               base=self.config.rope_theta)
 
-        # Reasoning Layers
-        self.H_level = HierarchicalReasoningModel_ACTV1ReasoningModule(layers=[HierarchicalReasoningModel_ACTV1Block(self.config) for _i in range(self.config.H_layers)])
-        self.L_level = HierarchicalReasoningModel_ACTV1ReasoningModule(layers=[HierarchicalReasoningModel_ACTV1Block(self.config) for _i in range(self.config.L_layers)])
+        # Reasoning Layers with layer indices for residual scaling
+        self.H_level = HierarchicalReasoningModel_ACTV1ReasoningModule(
+            layers=[HierarchicalReasoningModel_ACTV1Block(self.config, layer_idx=i, total_layers=self.config.H_layers) for i in range(self.config.H_layers)],
+            norm_eps=self.config.rms_norm_eps
+        )
+        self.L_level = HierarchicalReasoningModel_ACTV1ReasoningModule(
+            layers=[HierarchicalReasoningModel_ACTV1Block(self.config, layer_idx=i, total_layers=self.config.L_layers) for i in range(self.config.L_layers)],
+            norm_eps=self.config.rms_norm_eps
+        )
         
-        # Initial states
-        self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
-        self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
+        # Initial states (reduced std for better convergence with bfloat16)
+        # Using std=0.02 similar to modern transformer initializations
+        self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=0.02), persistent=True)
+        self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=0.02), persistent=True)
 
         # Q head special init
         # Init Q to (almost) zero for faster learning during bootstrapping
@@ -288,10 +303,7 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
                 projected = self.square_projection(input_flat) # [batch*64, hidden_size]
                 embedding = projected.view(batch_size, num_squares, self.config.hidden_size)
 
-                # apply activation???
-                embedding = F.relu(embedding)
-
-                # Step 3: Gating
+                # Step 3: Gating (gating includes activation internally)
                 embedding = self.input_gate(embedding)
 
             else:
