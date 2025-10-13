@@ -12,8 +12,8 @@
 #SBATCH --array=1-4
 
 module load Anaconda3/2024.02-1
-module load cuDNN/9.1.1.17-CUDA-12.4.0
-module load GCC/12.3.0
+module load cuDNN
+module load GCC
 
 cd /users/acb22av/HRM-Chess/lczero-training
 PYTHON_BIN="/users/acb22av/.conda/envs/hrm-chess/bin/python3.12"
