@@ -6,9 +6,15 @@ import torch.nn.functional as F
 
 try:
     from flash_attn_interface import flash_attn_func  # type: ignore[import]
+    USE_FLASH_ATTN = True
 except ImportError:
-    # Fallback to FlashAttention 2
-    from flash_attn import flash_attn_func  # type: ignore[import]
+    try:
+        from flash_attn import flash_attn_func  # type: ignore[import]
+        USE_FLASH_ATTN = True
+    except (ImportError, OSError):
+        # fallback to pytorch native attention
+        USE_FLASH_ATTN = False
+        flash_attn_func = None
 
 from model.HRM_model.models.common import trunc_normal_init_
 
@@ -127,9 +133,22 @@ class Attention(nn.Module):
             query, key = apply_rotary_pos_emb(query, key, cos, sin)
 
         # flash attn
-        attn_output = flash_attn_func(q=query, k=key, v=value, causal=self.causal)
-        if isinstance(attn_output, tuple):  # fa2 and fa3 compatibility
-            attn_output = attn_output[0]
+        if USE_FLASH_ATTN and flash_attn_func is not None:
+            attn_output = flash_attn_func(q=query, k=key, v=value, causal=self.causal)
+            if isinstance(attn_output, tuple):  # fa2/fa3 compatibility
+                attn_output = attn_output[0]
+        else:
+            # fallback to pytorch memory-efficient attention
+            # query/key/value: [batch, seq, n_heads, head_dim]
+            attn_output = F.scaled_dot_product_attention(
+                query.transpose(1, 2),  # [batch, n_heads, seq, head_dim]
+                key.transpose(1, 2),
+                value.transpose(1, 2),
+                attn_mask=None,
+                dropout_p=0.0,
+                is_causal=self.causal,
+            )
+            attn_output = attn_output.transpose(1, 2)  # back to [batch, seq, n_heads, head_dim]
 
         # attn_output: [batch_size, num_heads, seq_len, head_dim]
         attn_output = attn_output.view(batch_size, seq_len, self.output_size)  # type: ignore
