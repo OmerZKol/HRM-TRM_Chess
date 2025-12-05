@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from model.HRM_model.models.hrm.hrm_act_v1 import HierarchicalReasoningModel_ACTV1
+from model.HRM_model.hrm.hrm_act_v1 import HierarchicalReasoningModel_ACTV1
 sys.path.append('../..')
 from model.HRMBridge import HRMAlphaZeroBridge
 

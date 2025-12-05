@@ -6,7 +6,7 @@ Based on the tfprocess.py implementation from Leela Chess Zero.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from model.HRM_model.models.layers import CastedLinear
+from model.HRM_model.layers import CastedLinear
 
 
 class TensorFlowStyleValueHead(nn.Module):

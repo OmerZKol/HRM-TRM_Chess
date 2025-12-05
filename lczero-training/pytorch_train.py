@@ -16,6 +16,7 @@ import yaml
 import os
 from simple_chess_nn import ChessLoss, SimpleChessNet
 from model.ChessNNet import ChessNNet
+from model.ChessTRMNet import ChessTRMNet
 from transformer_chess_nn import TransformerChessNet
 from torch.utils.tensorboard import SummaryWriter
 
@@ -262,8 +263,8 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: ChessLoss,
             value_target = value_target.to(device)
             ml_target = ml_target.to(device)
 
-            # for HRM model, compute output with mixed precision for FlashAttention compatibility
-            if(criterion.model_type == "hrm"):
+            # for HRM/TRM model, compute output with mixed precision for FlashAttention compatibility
+            if(criterion.model_type == "hrm" or criterion.model_type == "trm"):
                 with torch.autocast(device_type=device.type, dtype=torch.float16):
                     model_output = model(planes)
             else:
@@ -315,7 +316,7 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
         # # Forward pass - assuming model returns (policy_logits, value_logits, moves_left)
         
         # compute output with mixed precision for FlashAttention compatibility
-        if(criterion.model_type == "hrm"):
+        if(criterion.model_type == "hrm" or criterion.model_type == "trm"):
             with torch.autocast(device_type=device.type, dtype=torch.float16):
                 model_output = model(planes)
         else:
@@ -374,6 +375,8 @@ def load_model(args, config, device):
         return SimpleChessNet().to(device)
     if(config.get("model_type") == "hrm"):
         return ChessNNet(config, (8,8)).to(device)
+    if(config.get("model_type") == "trm"):
+        return ChessTRMNet(config, (8,8)).to(device)
     if(config.get("model_type") == "transformer"):
         return TransformerChessNet((8,8), 1858).to(device)
 

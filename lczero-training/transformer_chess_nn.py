@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Tuple, Optional
 
-from model.HRM_model.models.layers import (
+from model.HRM_model.layers import (
     Attention, SwiGLU, RotaryEmbedding, CastedLinear, CastedEmbedding, rms_norm
 )
 from model.attention_policy_map import AttentionPolicyHead

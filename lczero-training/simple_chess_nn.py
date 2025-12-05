@@ -174,7 +174,7 @@ class ChessLoss(nn.Module):
                 ml_targets: torch.Tensor, ml_outputs: torch.Tensor, q_info: dict,
                 model: nn.Module) -> Tuple[torch.Tensor, dict]:
         """Combined loss calculation"""
-        
+
         # Individual losses
         p_loss = self.policy_loss(policy_targets, policy_outputs)
         v_loss = self.value_loss(value_targets, value_outputs)
@@ -183,23 +183,41 @@ class ChessLoss(nn.Module):
         reg_loss = sum(p.pow(2.0).sum() for p in model.parameters()) * self.reg_weight
         p_accuracy = self.calculate_move_accuracy(policy_targets, policy_outputs)
         # Combined loss
-        total_loss = (self.policy_weight * p_loss + 
-                     self.value_weight * v_loss + 
-                     self.moves_left_weight * ml_loss + 
+        total_loss = (self.policy_weight * p_loss +
+                     self.value_weight * v_loss +
+                     self.moves_left_weight * ml_loss +
                      reg_loss)
-        
-        # add in q losses for hrm, if the halt_max_steps is set > 1
+
+        # add in q losses for hrm/trm, if the halt_max_steps is set > 1
         if self.config.get('model_type') == "hrm":
             if self.config.get('hrm_config').get('halt_max_steps') > 1:
                 q_halt_loss = self.loss_q_halt(policy_targets, policy_outputs, value_targets, value_outputs, q_info)
-                q_continue_loss = self.loss_q_continue(q_info)
-                q_loss = 0.5 * (q_halt_loss + q_continue_loss)
+                # Check if use_q_continue is enabled (default: True for backwards compatibility)
+                use_q_continue = self.config.get('hrm_config').get('use_q_continue', True)
+                if use_q_continue:
+                    q_continue_loss = self.loss_q_continue(q_info)
+                    q_loss = 0.5 * (q_halt_loss + q_continue_loss)
+                else:
+                    q_continue_loss = torch.tensor(0.0, device=q_halt_loss.device)
+                    q_loss = q_halt_loss
                 total_loss += q_loss
-        
+        elif self.config.get('model_type') == "trm":
+            if self.config.get('trm_config').get('halt_max_steps') > 1:
+                q_halt_loss = self.loss_q_halt(policy_targets, policy_outputs, value_targets, value_outputs, q_info)
+                # Check if use_q_continue is enabled (default: True for backwards compatibility)
+                use_q_continue = self.config.get('trm_config').get('use_q_continue', True)
+                if use_q_continue:
+                    q_continue_loss = self.loss_q_continue(q_info)
+                    q_loss = 0.5 * (q_halt_loss + q_continue_loss)
+                else:
+                    q_continue_loss = torch.tensor(0.0, device=q_halt_loss.device)
+                    q_loss = q_halt_loss
+                total_loss += q_loss
+
         # Return loss components for logging
         loss_dict = {
             'policy_loss': p_loss.item(),
-            'value_loss': v_loss.item(), 
+            'value_loss': v_loss.item(),
             'moves_left_loss': ml_loss.item(),
             'reg_loss': reg_loss.item(),
             'total_loss': total_loss.item(),
@@ -214,5 +232,10 @@ class ChessLoss(nn.Module):
                 loss_dict['q_halt_loss'] = q_halt_loss.item()
                 loss_dict['q_continue_loss'] = q_continue_loss.item()
                 loss_dict['q_loss'] = q_loss.item()
-            
+        elif self.config.get('model_type') == "trm":
+            if self.config.get('trm_config').get('halt_max_steps') > 1:
+                loss_dict['q_halt_loss'] = q_halt_loss.item()
+                loss_dict['q_continue_loss'] = q_continue_loss.item()
+                loss_dict['q_loss'] = q_loss.item()
+
         return total_loss, loss_dict
