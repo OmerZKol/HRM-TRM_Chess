@@ -2,7 +2,7 @@
 # Model: SimpleChessNet - Basic CNN architecture
 
 # Training parameters
-batch_size: 128
+batch_size: 256
 learning_rate: 0.0001
 epochs: 30
 
@@ -10,6 +10,8 @@ name: "CNN"
 
 # Data sampling
 sample_rate: 1  # Use all data (set to higher value for faster training with less data)
+
+num_workers: 4  # Number of parallel data loading workers (0 = single-threaded)
 
 # Loss weights
 policy_loss_weight: 1.0

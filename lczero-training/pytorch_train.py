@@ -295,45 +295,71 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: ChessLoss,
 
     return total_losses
 
-def train_epoch(model: nn.Module, dataloader: DataLoader, criterion, 
-                optimizer: torch.optim.Optimizer, device: torch.device) -> dict:
-    """Train for one epoch"""
+def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
+                optimizer: torch.optim.Optimizer, device: torch.device,
+                scaler: torch.cuda.amp.GradScaler = None,
+                gradient_accumulation_steps: int = 1) -> dict:
+    """Train for one epoch with optional mixed precision and gradient accumulation"""
     model.train()
-    
-    total_losses = {'policy_loss': 0, 'value_loss': 0, 'moves_left_loss': 0, 
+
+    total_losses = {'policy_loss': 0, 'value_loss': 0, 'moves_left_loss': 0,
                    'reg_loss': 0, 'q_halt_loss': 0, 'q_continue_loss': 0, 'q_loss': 0,
                     'total_loss': 0, 'move_accuracy': 0}
     num_batches = 0
-    
+
     for batch_idx, (planes, policy_target, value_target, best_q_target, ml_target) in enumerate(dataloader):
-        planes = planes.to(device)
-        policy_target = policy_target.to(device)
-        value_target = value_target.to(device)
-        ml_target = ml_target.to(device)
-        
-        optimizer.zero_grad()
-        
-        # # Forward pass - assuming model returns (policy_logits, value_logits, moves_left)
-        
-        # compute output with mixed precision for FlashAttention compatibility
-        if(criterion.model_type == "hrm" or criterion.model_type == "trm"):
+        planes = planes.to(device, non_blocking=True)
+        policy_target = policy_target.to(device, non_blocking=True)
+        value_target = value_target.to(device, non_blocking=True)
+        ml_target = ml_target.to(device, non_blocking=True)
+
+        # Forward pass with automatic mixed precision
+        use_amp = scaler is not None
+        if use_amp:
             with torch.autocast(device_type=device.type, dtype=torch.float16):
                 model_output = model(planes)
+                policy_output, value_output, moves_left_output, q_output = model_output
+
+                # Calculate loss
+                total_loss, loss_dict = criterion(policy_target, policy_output,
+                                          value_target, value_output,
+                                          ml_target, moves_left_output,
+                                          q_output, model)
+                # Scale loss for gradient accumulation
+                total_loss = total_loss / gradient_accumulation_steps
         else:
-            model_output = model(planes)
-        policy_output, value_output, moves_left_output, q_output = model_output
-        
-        # Calculate loss
-        total_loss, loss_dict = criterion(policy_target, policy_output, 
-                                  value_target, value_output,
-                                  ml_target, moves_left_output,
-                                  q_output, model)
-        
+            # compute output with mixed precision for FlashAttention compatibility (HRM/TRM only)
+            if(criterion.model_type == "hrm" or criterion.model_type == "trm"):
+                with torch.autocast(device_type=device.type, dtype=torch.float16):
+                    model_output = model(planes)
+            else:
+                model_output = model(planes)
+            policy_output, value_output, moves_left_output, q_output = model_output
+
+            # Calculate loss
+            total_loss, loss_dict = criterion(policy_target, policy_output,
+                                      value_target, value_output,
+                                      ml_target, moves_left_output,
+                                      q_output, model)
+            # Scale loss for gradient accumulation
+            total_loss = total_loss / gradient_accumulation_steps
+
         # Backward pass
-        total_loss.backward()
-        optimizer.step()
-        
-        # Accumulate losses
+        if use_amp:
+            scaler.scale(total_loss).backward()
+        else:
+            total_loss.backward()
+
+        # Optimizer step with gradient accumulation
+        if (batch_idx + 1) % gradient_accumulation_steps == 0:
+            if use_amp:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
+            optimizer.zero_grad()
+
+        # Accumulate losses (unscaled for logging)
         total_losses['policy_loss'] += loss_dict['policy_loss']
         total_losses['value_loss'] += loss_dict['value_loss']
         total_losses['moves_left_loss'] += loss_dict['moves_left_loss']
@@ -344,11 +370,11 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
         total_losses['total_loss'] += loss_dict['total_loss']
         total_losses['move_accuracy'] += loss_dict['policy_accuracy']
         num_batches += 1
-    
+
     # Average losses and accuracy
     for key in total_losses:
         total_losses[key] /= num_batches
-        
+
     return total_losses
 
 def load_model(args, config, device):
@@ -443,16 +469,31 @@ def main():
         print("No chunk files found! Use --test flag to run with dummy data.")
         return
 
-    # chunk_files = chunk_files[:20]
+    # Sample a specific number of random chunk files from the total available
+    #dataset used has nearly 20,000 chunk files, corresponding to ~2 million games
+    #to speed up training during experimentation, a smaller subset of 4000 chunk files is used
+    #coresponds to ~400,000 games
+    num_chunks = 4000
+    num_chunks = min(num_chunks, len(chunk_files))  # Don't exceed available files
+    random.seed(42) #set seed for reproducibility
+    chunk_files = random.sample(chunk_files, num_chunks)
+    random.seed()  # Reset seed for other random operations
 
     train_split = int(0.9 * len(chunk_files)) # 90% for training, 10% for validation
 
     train_dataset = ChessDataset(chunk_files[:train_split], sample_rate=config.get('sample_rate', 0))  # Use higher sampling for speed
     valid_dataset = ChessDataset(chunk_files[train_split:], sample_rate=config.get('sample_rate', 0))
+
+    # Optimize data loading with multiple workers and pinned memory
+    num_workers = config.get('num_workers', 4)  # Use 4 workers by default for parallel data loading
     train_dataloader = DataLoader(train_dataset, batch_size=config.get('batch_size', 64),
-                            shuffle=True, num_workers=0, pin_memory=False)
-    test_dataloader = DataLoader(valid_dataset, batch_size=config.get('batch_size', 64), 
-                            shuffle=False, num_workers=0, pin_memory=False)
+                            shuffle=True, num_workers=num_workers, pin_memory=True,
+                            persistent_workers=True if num_workers > 0 else False,
+                            prefetch_factor=2 if num_workers > 0 else None)
+    test_dataloader = DataLoader(valid_dataset, batch_size=config.get('batch_size', 64),
+                            shuffle=False, num_workers=num_workers, pin_memory=True,
+                            persistent_workers=True if num_workers > 0 else False,
+                            prefetch_factor=2 if num_workers > 0 else None)
 
     print(f'Training dataset size: {len(train_dataset)}')
 
@@ -473,7 +514,18 @@ def main():
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer, T_0=10, T_mult=2, eta_min=config.get('lr', 0.0001)/100
     )
-    
+
+    # Initialize mixed precision scaler for AMP (if enabled and on CUDA)
+    use_amp = config.get('use_amp', False) and device.type == 'cuda'
+    scaler = torch.cuda.amp.GradScaler() if use_amp else None
+    gradient_accumulation_steps = config.get('gradient_accumulation_steps', 1)
+
+    if use_amp:
+        print(f'Using Automatic Mixed Precision (AMP) training')
+    if gradient_accumulation_steps > 1:
+        print(f'Using gradient accumulation with {gradient_accumulation_steps} steps')
+        print(f'Effective batch size: {config.get("batch_size", 64) * gradient_accumulation_steps}')
+
     # Initialize TensorBoard writer
     log_dir = f"runs/chess_training_{config.get('name')}"
     writer = SummaryWriter(log_dir=log_dir)
@@ -487,8 +539,9 @@ def main():
     # Training loop
     for epoch in range(config.get('epochs')):
         print(f'\nEpoch {epoch+1}/{config.get('epochs')}')
-        
-        losses = train_epoch(model, train_dataloader, criterion, optimizer, device)
+
+        losses = train_epoch(model, train_dataloader, criterion, optimizer, device,
+                           scaler=scaler, gradient_accumulation_steps=gradient_accumulation_steps)
         
         # Step the learning rate scheduler
         scheduler.step()
