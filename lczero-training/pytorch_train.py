@@ -530,11 +530,14 @@ def main():
     log_dir = f"runs/chess_training_{config.get('name')}"
     writer = SummaryWriter(log_dir=log_dir)
     print(f'TensorBoard logs will be saved to: {log_dir}')
-    
-    # # Initialize parameter tracking
-    # param_snapshot_dir = "parameter_snapshots"
-    # os.makedirs(param_snapshot_dir, exist_ok=True)
-    # print(f'Parameter snapshots will be saved to: {param_snapshot_dir}')
+
+    # Early stopping parameters (hardcoded)
+    early_stopping_patience = 4  # Stop if no improvement for 4 validation checks (set to None to disable)
+    best_val_loss = float('inf')
+    epochs_without_improvement = 0
+
+    if early_stopping_patience:
+        print(f'Early stopping enabled with patience: {early_stopping_patience} validation checks')
 
     # Training loop
     for epoch in range(config.get('epochs')):
@@ -561,11 +564,29 @@ def main():
             print(f'Validation Losses:')
             for key, value in eval_losses.items():
                 print(f'  {key}: {value:.6f}')
-            
+
             # Log validation metrics to TensorBoard
             for key, value in eval_losses.items():
                 writer.add_scalar(f'Validation/{key}', value, epoch)
-            
+
+            # Early stopping check
+            current_val_loss = eval_losses['total_loss']
+            if early_stopping_patience:
+                if current_val_loss < best_val_loss:
+                    best_val_loss = current_val_loss
+                    epochs_without_improvement = 0
+                    print(f'Validation loss improved to {best_val_loss:.6f}')
+                else:
+                    epochs_without_improvement += 1
+                    print(f'No improvement for {epochs_without_improvement} validation checks (patience: {early_stopping_patience})')
+
+                    if epochs_without_improvement >= early_stopping_patience:
+                        print(f'\nEarly stopping triggered! No improvement for {early_stopping_patience} validation checks.')
+                        print(f'Best validation loss: {best_val_loss:.6f}')
+                        save_model(model, optimizer, scheduler, config, args, epoch, losses)
+                        writer.close()
+                        return
+
             # Save model checkpoint
             save_model(model, optimizer, scheduler, config, args, epoch, losses)
 
