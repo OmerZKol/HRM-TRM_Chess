@@ -385,9 +385,12 @@ def save_model(model, optimizer, scheduler, config, args, epoch, losses):
     if args.save_path:
         save_path = args.save_path
     else:
-        save_path = f"model_checkpoints/chess_model_epoch_{epoch}.pth"
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    
+        # Create directory structure: model_checkpoints/{model_name}/epoch_{epoch}.pth
+        model_name = config.get('name', 'unnamed_model')
+        checkpoint_dir = f"model_checkpoints/{model_name}"
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        save_path = f"{checkpoint_dir}/epoch_{epoch}.pth"
+
     # Save model state and training info
     save_dict = {
         'model_state_dict': model.state_dict(),
@@ -398,7 +401,7 @@ def save_model(model, optimizer, scheduler, config, args, epoch, losses):
         'model_type': config.get("model_type"),
         'model_class': model.__class__.__name__
     }
-    
+
     torch.save(save_dict, save_path)
     print(f"Model saved to {save_path}")
 
