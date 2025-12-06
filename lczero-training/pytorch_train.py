@@ -469,15 +469,15 @@ def main():
         print("No chunk files found! Use --test flag to run with dummy data.")
         return
 
-    # Sample a specific number of random chunk files from the total available
-    #dataset used has nearly 20,000 chunk files, corresponding to ~2 million games
-    #to speed up training during experimentation, a smaller subset of 4000 chunk files is used
-    #coresponds to ~400,000 games
-    num_chunks = 4000
-    num_chunks = min(num_chunks, len(chunk_files))  # Don't exceed available files
-    random.seed(42) #set seed for reproducibility
-    chunk_files = random.sample(chunk_files, num_chunks)
-    random.seed()  # Reset seed for other random operations
+    # # Sample a specific number of random chunk files from the total available
+    # #dataset used has nearly 20,000 chunk files, corresponding to ~2 million games
+    # #to speed up training during experimentation, a smaller subset of 5000 chunk files is used
+    # #coresponds to ~500,000 games
+    # num_chunks = 5000
+    # num_chunks = min(num_chunks, len(chunk_files))  # Don't exceed available files
+    # random.seed(42) #set seed for reproducibility
+    # chunk_files = random.sample(chunk_files, num_chunks)
+    # random.seed()  # Reset seed for other random operations
 
     train_split = int(0.9 * len(chunk_files)) # 90% for training, 10% for validation
 
