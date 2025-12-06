@@ -516,12 +516,18 @@ def main():
     )
 
     # Initialize mixed precision scaler for AMP (if enabled and on CUDA)
-    use_amp = config.get('use_amp', False) and device.type == 'cuda'
+    # Note: Don't use gradient scaler with bfloat16 (not supported)
+    # bfloat16 provides mixed precision benefits without gradient scaling
+    use_bfloat16 = (config.get('model_type') in ['hrm', 'trm'] and
+                    config.get(f'{config.get("model_type")}_config', {}).get('forward_dtype') == 'bfloat16')
+    use_amp = config.get('use_amp', False) and device.type == 'cuda' and not use_bfloat16
     scaler = torch.cuda.amp.GradScaler() if use_amp else None
     gradient_accumulation_steps = config.get('gradient_accumulation_steps', 1)
 
     if use_amp:
-        print(f'Using Automatic Mixed Precision (AMP) training')
+        print(f'Using Automatic Mixed Precision (AMP) training with float16')
+    if use_bfloat16:
+        print(f'Using bfloat16 mixed precision (no gradient scaling)')
     if gradient_accumulation_steps > 1:
         print(f'Using gradient accumulation with {gradient_accumulation_steps} steps')
         print(f'Effective batch size: {config.get("batch_size", 64) * gradient_accumulation_steps}')
