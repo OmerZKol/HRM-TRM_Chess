@@ -40,8 +40,8 @@ python pytorch_train.py --config config/transformer_chess_nn.yaml --data-path da
 # Train HRM model (single-step, halt_max_steps=1)
 python pytorch_train.py --config config/hrm_halt1.yaml --data-path data/training-run1--20250209-1017
 
-# Train HRM model (multi-step adaptive, halt_max_steps=10)
-python pytorch_train.py --config config/hrm_halt10.yaml --data-path data/training-run1--20250209-1017
+# Train HRM model (multi-step adaptive, halt_max_steps=4)
+python pytorch_train.py --config config/hrm_halt4.yaml --data-path data/training-run1--20250209-1017
 
 # View training logs with TensorBoard
 tensorboard --logdir runs/

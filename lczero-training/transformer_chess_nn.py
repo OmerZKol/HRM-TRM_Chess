@@ -191,7 +191,7 @@ class TransformerChessNet(nn.Module):
         policy_size=1858,
         input_channels=112,
         hidden_size=512,
-        num_layers=6,
+        num_layers=4,
         num_heads=8,
         expansion=4.0,
         max_position_embeddings=64,

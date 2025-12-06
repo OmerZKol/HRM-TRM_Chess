@@ -43,7 +43,7 @@ trm_config:
   rope_theta: 10000.0
 
   # Halting configuration - MULTI-STEP with adaptive computation
-  halt_max_steps: 10
+  halt_max_steps: 4
   halt_exploration_prob: 0.1
   no_ACT_continue: False  # Simplified halting (TRM-specific)
 
