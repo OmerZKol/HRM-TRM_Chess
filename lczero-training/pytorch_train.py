@@ -252,7 +252,7 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: ChessLoss,
             device: torch.device) -> dict:
     """Evaluate model on validation set"""
     model.eval()
-    total_losses = {'policy_loss': 0, 'value_loss': 0, 'moves_left_loss': 0, 
+    total_losses = {'policy_loss': 0, 'value_loss': 0, 'moves_left_loss': 0,
                    'reg_loss': 0, 'total_loss': 0, "move_accuracy": 0, 'q_loss': 0}
     num_batches = 0
 
@@ -263,21 +263,44 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: ChessLoss,
             value_target = value_target.to(device)
             ml_target = ml_target.to(device)
 
+            # NaN detection: Check validation input data
+            if torch.isnan(planes).any():
+                print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in input planes")
+            if torch.isnan(policy_target).any():
+                print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in policy_target")
+            if torch.isnan(value_target).any():
+                print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in value_target")
+            if torch.isnan(ml_target).any():
+                print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in ml_target")
+
             # for HRM/TRM model, compute output with mixed precision for FlashAttention compatibility
             if(criterion.model_type == "hrm" or criterion.model_type == "trm"):
                 with torch.autocast(device_type=device.type, dtype=torch.float16):
                     model_output = model(planes)
             else:
                 model_output = model(planes)
-            
+
             policy_output, value_output, moves_left_output, q_output = model_output
 
+            # NaN detection: Check validation model outputs
+            if torch.isnan(policy_output).any():
+                print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in policy_output")
+            if torch.isnan(value_output).any():
+                print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in value_output")
+            if torch.isnan(moves_left_output).any():
+                print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in moves_left_output")
+
             # Calculate loss
-            total_loss, loss_dict = criterion(policy_target, policy_output, 
+            total_loss, loss_dict = criterion(policy_target, policy_output,
                                   value_target, value_output,
                                   ml_target, moves_left_output,
                                   q_output, model)
-            
+
+            # NaN detection: Check validation loss
+            if torch.isnan(total_loss):
+                print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in total_loss")
+                print(f"  Loss components: {loss_dict}")
+
             # Accumulate losses
             total_losses['policy_loss'] += loss_dict['policy_loss']
             total_losses['value_loss'] += loss_dict['value_loss']
@@ -313,12 +336,30 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
         value_target = value_target.to(device, non_blocking=True)
         ml_target = ml_target.to(device, non_blocking=True)
 
+        # NaN detection: Check input data
+        if torch.isnan(planes).any():
+            print(f"[NaN Detection] Batch {batch_idx}: NaN detected in input planes")
+        if torch.isnan(policy_target).any():
+            print(f"[NaN Detection] Batch {batch_idx}: NaN detected in policy_target")
+        if torch.isnan(value_target).any():
+            print(f"[NaN Detection] Batch {batch_idx}: NaN detected in value_target")
+        if torch.isnan(ml_target).any():
+            print(f"[NaN Detection] Batch {batch_idx}: NaN detected in ml_target")
+
         # Forward pass with automatic mixed precision
         use_amp = scaler is not None
         if use_amp:
             with torch.autocast(device_type=device.type, dtype=torch.float16):
                 model_output = model(planes)
                 policy_output, value_output, moves_left_output, q_output = model_output
+
+                # NaN detection: Check model outputs
+                if torch.isnan(policy_output).any():
+                    print(f"[NaN Detection] Batch {batch_idx}: NaN detected in policy_output (after forward)")
+                if torch.isnan(value_output).any():
+                    print(f"[NaN Detection] Batch {batch_idx}: NaN detected in value_output (after forward)")
+                if torch.isnan(moves_left_output).any():
+                    print(f"[NaN Detection] Batch {batch_idx}: NaN detected in moves_left_output (after forward)")
 
                 # Calculate loss
                 total_loss, loss_dict = criterion(policy_target, policy_output,
@@ -336,6 +377,14 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
                 model_output = model(planes)
             policy_output, value_output, moves_left_output, q_output = model_output
 
+            # NaN detection: Check model outputs
+            if torch.isnan(policy_output).any():
+                print(f"[NaN Detection] Batch {batch_idx}: NaN detected in policy_output (after forward)")
+            if torch.isnan(value_output).any():
+                print(f"[NaN Detection] Batch {batch_idx}: NaN detected in value_output (after forward)")
+            if torch.isnan(moves_left_output).any():
+                print(f"[NaN Detection] Batch {batch_idx}: NaN detected in moves_left_output (after forward)")
+
             # Calculate loss
             total_loss, loss_dict = criterion(policy_target, policy_output,
                                       value_target, value_output,
@@ -344,11 +393,32 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
             # Scale loss for gradient accumulation
             total_loss = total_loss / gradient_accumulation_steps
 
+        # NaN detection: Check loss
+        if torch.isnan(total_loss):
+            print(f"[NaN Detection] Batch {batch_idx}: NaN detected in total_loss")
+            print(f"  Loss components: {loss_dict}")
+            # Check individual loss components
+            for key, value in loss_dict.items():
+                if isinstance(value, float) and (value != value):  # NaN check for float
+                    print(f"  - {key} is NaN")
+
         # Backward pass
         if use_amp:
             scaler.scale(total_loss).backward()
         else:
             total_loss.backward()
+
+        # NaN detection: Check gradients
+        nan_grads = []
+        for name, param in model.named_parameters():
+            if param.grad is not None and torch.isnan(param.grad).any():
+                nan_grads.append(name)
+        if nan_grads:
+            print(f"[NaN Detection] Batch {batch_idx}: NaN detected in gradients:")
+            for name in nan_grads[:5]:  # Show first 5 to avoid spam
+                print(f"  - {name}")
+            if len(nan_grads) > 5:
+                print(f"  ... and {len(nan_grads) - 5} more parameters")
 
         # Optimizer step with gradient accumulation
         if (batch_idx + 1) % gradient_accumulation_steps == 0:
@@ -358,6 +428,18 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
             else:
                 optimizer.step()
             optimizer.zero_grad()
+
+            # NaN detection: Check model parameters after optimizer step
+            nan_params = []
+            for name, param in model.named_parameters():
+                if torch.isnan(param).any():
+                    nan_params.append(name)
+            if nan_params:
+                print(f"[NaN Detection] Batch {batch_idx}: NaN detected in model parameters after optimizer step:")
+                for name in nan_params[:5]:
+                    print(f"  - {name}")
+                if len(nan_params) > 5:
+                    print(f"  ... and {len(nan_params) - 5} more parameters")
 
         # Accumulate losses (unscaled for logging)
         total_losses['policy_loss'] += loss_dict['policy_loss']
@@ -473,7 +555,7 @@ def main():
     # #dataset used has nearly 20,000 chunk files, corresponding to ~2 million games
     # #to speed up training during experimentation, a smaller subset of 5000 chunk files is used
     # #coresponds to ~500,000 games
-    # num_chunks = 5000
+    num_chunks = 5
     # num_chunks = min(num_chunks, len(chunk_files))  # Don't exceed available files
     # random.seed(42) #set seed for reproducibility
     # chunk_files = random.sample(chunk_files, num_chunks)
@@ -485,7 +567,7 @@ def main():
     valid_dataset = ChessDataset(chunk_files[train_split:], sample_rate=config.get('sample_rate', 0))
 
     # Optimize data loading with multiple workers and pinned memory
-    num_workers = config.get('num_workers', 4)  # Use 4 workers by default for parallel data loading
+    num_workers = config.get('num_workers', 0)  # Use 4 workers by default for parallel data loading
     train_dataloader = DataLoader(train_dataset, batch_size=config.get('batch_size', 64),
                             shuffle=True, num_workers=num_workers, pin_memory=True,
                             persistent_workers=True if num_workers > 0 else False,
