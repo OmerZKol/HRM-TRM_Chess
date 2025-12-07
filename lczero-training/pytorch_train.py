@@ -422,10 +422,15 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
 
         # Optimizer step with gradient accumulation
         if (batch_idx + 1) % gradient_accumulation_steps == 0:
+            # Gradient clipping to prevent gradient explosion (critical for stability)
             if use_amp:
+                # Unscale gradients before clipping when using AMP
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 scaler.step(optimizer)
                 scaler.update()
             else:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
             optimizer.zero_grad()
 
