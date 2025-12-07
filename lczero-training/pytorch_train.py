@@ -559,14 +559,13 @@ def main():
     # Initialize model
     model = load_model(args, config, device)
     print(f'Model parameters: {sum(p.numel() for p in model.parameters()):,}')
-    
-    print(args.data_path)
+
     # Get chunk files
     chunk_files = glob.glob(os.path.join(args.data_path, "*.gz"))
     print(f'Found {len(chunk_files)} chunk files in {args.data_path}')
     
     if not chunk_files:
-        print("No chunk files found! Use --test flag to run with dummy data.")
+        print("No chunk files found! Make sure the data path is correct.")
         return
 
     # # Sample a specific number of random chunk files from the total available
@@ -579,13 +578,16 @@ def main():
     # chunk_files = random.sample(chunk_files, num_chunks)
     # random.seed()  # Reset seed for other random operations
 
+
+    # chunk_files = chunk_files[:20]
+
     train_split = int(0.9 * len(chunk_files)) # 90% for training, 10% for validation
 
     train_dataset = ChessDataset(chunk_files[:train_split], sample_rate=config.get('sample_rate', 0))  # Use higher sampling for speed
     valid_dataset = ChessDataset(chunk_files[train_split:], sample_rate=config.get('sample_rate', 0))
 
     # Optimize data loading with multiple workers and pinned memory
-    num_workers = config.get('num_workers', 0)  # Use 4 workers by default for parallel data loading
+    num_workers = config.get('num_workers', 4)  # Use 4 workers by default for parallel data loading
     train_dataloader = DataLoader(train_dataset, batch_size=config.get('batch_size', 64),
                             shuffle=True, num_workers=num_workers, pin_memory=True,
                             persistent_workers=True if num_workers > 0 else False,

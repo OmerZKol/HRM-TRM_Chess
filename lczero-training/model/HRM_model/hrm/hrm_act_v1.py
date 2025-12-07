@@ -130,11 +130,11 @@ class HierarchicalReasoningModel_ACTV1Block(nn.Module):
         )
         self.norm_eps = config.rms_norm_eps
 
-        # Residual scaling for deep networks (helps gradient flow)
-        # Using conservative constant scaling for bfloat16 numerical stability
-        # Original aggressive scaling: (total_layers / (layer_idx + 1)) ** 0.5 causes overflow
-        # Conservative approach: constant 1/sqrt(total_layers) across all layers
-        self.residual_scale = 1.0 / (total_layers ** 0.5) if total_layers > 1 else 1.0
+        # No residual scaling - standard transformer approach
+        # Original aggressive scaling (total_layers / (layer_idx + 1)) ** 0.5 caused inf in bfloat16
+        # Standard transformers use no scaling (scale=1.0) which is numerically stable
+        # Pre-norm architecture already provides good gradient flow without scaling
+        self.residual_scale = 1.0
 
     def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
         # Pre-Norm (better gradient flow for deep networks)

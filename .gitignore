@@ -186,3 +186,5 @@ cython_debug/
 #.idea/
 lczero-training/visualize_parameters.py
 lczero-training/parameter_tracker.py
+
+runs2
