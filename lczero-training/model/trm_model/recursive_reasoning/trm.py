@@ -148,8 +148,11 @@ class TinyRecursiveReasoningModel_ACTV1Block(nn.Module):
         self.norm_eps = config.rms_norm_eps
 
         # Residual scaling for deep networks (helps gradient flow)
-        # Scale decreases with depth to prevent gradient explosion
-        self.residual_scale = (total_layers / (layer_idx + 1)) ** 0.5 if total_layers > 1 else 1.0
+        # Using conservative constant scaling for bfloat16 numerical stability
+        # Original aggressive scaling: (total_layers / (layer_idx + 1)) ** 0.5 causes overflow
+        # With 6 layers: layer 0 would be 2.45x, causing inf in bfloat16
+        # Conservative approach: constant 1/sqrt(total_layers) across all layers
+        self.residual_scale = 1.0 / (total_layers ** 0.5) if total_layers > 1 else 1.0
 
     def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
         # B, L, D = hidden_states.shape
