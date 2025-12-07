@@ -365,16 +365,41 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         # Forward iterations
         it = 0
         z_H, z_L = carry.z_H, carry.z_L
+
+        # NaN detection in forward pass
+        if torch.isnan(z_H).any():
+            print(f"[TRM NaN Detection] z_H has NaN before forward iterations")
+        if torch.isnan(z_L).any():
+            print(f"[TRM NaN Detection] z_L has NaN before forward iterations")
+        if torch.isnan(input_embeddings).any():
+            print(f"[TRM NaN Detection] input_embeddings has NaN")
+
         # H_cycles-1 without grad
         with torch.no_grad():
             for _H_step in range(self.config.H_cycles-1):
                 for _L_step in range(self.config.L_cycles):
-                    z_L = self.L_level(z_L, z_H + input_embeddings, **seq_info)
+                    z_H_plus_input = z_H + input_embeddings
+                    if torch.isnan(z_H_plus_input).any():
+                        print(f"[TRM NaN Detection] z_H + input_embeddings produced NaN (no_grad)")
+                    z_L = self.L_level(z_L, z_H_plus_input, **seq_info)
+                    if torch.isnan(z_L).any():
+                        print(f"[TRM NaN Detection] z_L has NaN after L_level (no_grad)")
                 z_H = self.L_level(z_H, z_L, **seq_info)
+                if torch.isnan(z_H).any():
+                    print(f"[TRM NaN Detection] z_H has NaN after L_level (no_grad)")
         # 1 with grad
         for _L_step in range(self.config.L_cycles):
-            z_L = self.L_level(z_L, z_H + input_embeddings, **seq_info)
+            z_H_plus_input = z_H + input_embeddings
+            if torch.isnan(z_H_plus_input).any():
+                print(f"[TRM NaN Detection] z_H + input_embeddings produced NaN (with grad)")
+                print(f"  z_H stats: min={z_H.min():.4f}, max={z_H.max():.4f}, mean={z_H.mean():.4f}")
+                print(f"  input_embeddings stats: min={input_embeddings.min():.4f}, max={input_embeddings.max():.4f}, mean={input_embeddings.mean():.4f}")
+            z_L = self.L_level(z_L, z_H_plus_input, **seq_info)
+            if torch.isnan(z_L).any():
+                print(f"[TRM NaN Detection] z_L has NaN after L_level (with grad)")
         z_H = self.L_level(z_H, z_L, **seq_info)
+        if torch.isnan(z_H).any():
+            print(f"[TRM NaN Detection] z_H has NaN after final L_level")
 
         # Outputs
         new_carry = TinyRecursiveReasoningModel_ACTV1InnerCarry(z_H=z_H.detach(), z_L=z_L.detach())  # New carry no grad

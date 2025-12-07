@@ -285,10 +285,13 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: ChessLoss,
             # NaN detection: Check validation model outputs
             if torch.isnan(policy_output).any():
                 print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in policy_output")
+                raise RuntimeError(f"NaN detected in validation policy_output at batch {batch_idx}. Stopping training.")
             if torch.isnan(value_output).any():
                 print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in value_output")
+                raise RuntimeError(f"NaN detected in validation value_output at batch {batch_idx}. Stopping training.")
             if torch.isnan(moves_left_output).any():
                 print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in moves_left_output")
+                raise RuntimeError(f"NaN detected in validation moves_left_output at batch {batch_idx}. Stopping training.")
 
             # Calculate loss
             total_loss, loss_dict = criterion(policy_target, policy_output,
@@ -300,6 +303,7 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: ChessLoss,
             if torch.isnan(total_loss):
                 print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in total_loss")
                 print(f"  Loss components: {loss_dict}")
+                raise RuntimeError(f"NaN detected in validation total_loss at batch {batch_idx}. Stopping training.")
 
             # Accumulate losses
             total_losses['policy_loss'] += loss_dict['policy_loss']
@@ -356,10 +360,13 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
                 # NaN detection: Check model outputs
                 if torch.isnan(policy_output).any():
                     print(f"[NaN Detection] Batch {batch_idx}: NaN detected in policy_output (after forward)")
+                    raise RuntimeError(f"NaN detected in policy_output at batch {batch_idx}. Stopping training.")
                 if torch.isnan(value_output).any():
                     print(f"[NaN Detection] Batch {batch_idx}: NaN detected in value_output (after forward)")
+                    raise RuntimeError(f"NaN detected in value_output at batch {batch_idx}. Stopping training.")
                 if torch.isnan(moves_left_output).any():
                     print(f"[NaN Detection] Batch {batch_idx}: NaN detected in moves_left_output (after forward)")
+                    raise RuntimeError(f"NaN detected in moves_left_output at batch {batch_idx}. Stopping training.")
 
                 # Calculate loss
                 total_loss, loss_dict = criterion(policy_target, policy_output,
@@ -380,10 +387,13 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
             # NaN detection: Check model outputs
             if torch.isnan(policy_output).any():
                 print(f"[NaN Detection] Batch {batch_idx}: NaN detected in policy_output (after forward)")
+                raise RuntimeError(f"NaN detected in policy_output at batch {batch_idx}. Stopping training.")
             if torch.isnan(value_output).any():
                 print(f"[NaN Detection] Batch {batch_idx}: NaN detected in value_output (after forward)")
+                raise RuntimeError(f"NaN detected in value_output at batch {batch_idx}. Stopping training.")
             if torch.isnan(moves_left_output).any():
                 print(f"[NaN Detection] Batch {batch_idx}: NaN detected in moves_left_output (after forward)")
+                raise RuntimeError(f"NaN detected in moves_left_output at batch {batch_idx}. Stopping training.")
 
             # Calculate loss
             total_loss, loss_dict = criterion(policy_target, policy_output,
@@ -401,6 +411,7 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
             for key, value in loss_dict.items():
                 if isinstance(value, float) and (value != value):  # NaN check for float
                     print(f"  - {key} is NaN")
+            raise RuntimeError(f"NaN detected in total_loss at batch {batch_idx}. Stopping training.")
 
         # Backward pass
         if use_amp:
@@ -419,6 +430,7 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
                 print(f"  - {name}")
             if len(nan_grads) > 5:
                 print(f"  ... and {len(nan_grads) - 5} more parameters")
+            raise RuntimeError(f"NaN detected in gradients at batch {batch_idx}. Stopping training.")
 
         # Optimizer step with gradient accumulation
         if (batch_idx + 1) % gradient_accumulation_steps == 0:
@@ -445,6 +457,7 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
                     print(f"  - {name}")
                 if len(nan_params) > 5:
                     print(f"  ... and {len(nan_params) - 5} more parameters")
+                raise RuntimeError(f"NaN detected in model parameters at batch {batch_idx}. Stopping training.")
 
         # Accumulate losses (unscaled for logging)
         total_losses['policy_loss'] += loss_dict['policy_loss']
