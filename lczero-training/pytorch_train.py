@@ -168,6 +168,9 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
                     # NaN detection: Check model outputs
                     if torch.isnan(policy_output).any():
                         print(f"[NaN Detection] Batch {batch_idx}: NaN detected in policy_output (after forward)")
+                        print(policy_output)
+                        print(value_output)
+                        print(moves_left_output)
                         raise RuntimeError(f"NaN detected in policy_output at batch {batch_idx}. Stopping training.")
                     if torch.isnan(value_output).any():
                         print(f"[NaN Detection] Batch {batch_idx}: NaN detected in value_output (after forward)")
@@ -188,6 +191,9 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
                 # NaN detection: Check model outputs
                 if torch.isnan(policy_output).any():
                     print(f"[NaN Detection] Batch {batch_idx}: NaN detected in policy_output (after forward)")
+                    print(policy_output)
+                    print(value_output)
+                    print(moves_left_output)
                     raise RuntimeError(f"NaN detected in policy_output at batch {batch_idx}. Stopping training.")
                 if torch.isnan(value_output).any():
                     print(f"[NaN Detection] Batch {batch_idx}: NaN detected in value_output (after forward)")
