@@ -452,14 +452,16 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
             "value_logits": value_logits,
             "moves_left_logits": moves_left_logits,
         }
-        
+
         # Add attention weights if using attention policy
         if hasattr(self.inner, 'attention_weights') and self.inner.attention_weights is not None:
             outputs["attention_weights"] = self.inner.attention_weights
-        
+
         with torch.no_grad():
             # Step
             new_steps = new_steps + 1
+            # Add recursion steps to outputs for tracking
+            outputs["recursion_steps"] = new_steps.clone()
             is_last_step = new_steps >= self.config.halt_max_steps
             
             halted = is_last_step

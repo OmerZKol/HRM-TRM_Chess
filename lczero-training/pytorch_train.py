@@ -255,6 +255,8 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: ChessLoss,
     total_losses = {'policy_loss': 0, 'value_loss': 0, 'moves_left_loss': 0,
                    'reg_loss': 0, 'total_loss': 0, "move_accuracy": 0, 'q_loss': 0}
     num_batches = 0
+    total_recursion_steps = 0
+    num_recursion_samples = 0
 
     with torch.no_grad():
         for batch_idx, (planes, policy_target, value_target, best_q_target, ml_target) in enumerate(dataloader):
@@ -305,6 +307,12 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: ChessLoss,
                 print(f"  Loss components: {loss_dict}")
                 raise RuntimeError(f"NaN detected in validation total_loss at batch {batch_idx}. Stopping training.")
 
+            # Track recursion steps if available (HRM/TRM models)
+            if "recursion_steps" in q_output:
+                recursion_steps = q_output["recursion_steps"]
+                total_recursion_steps += recursion_steps.sum().item()
+                num_recursion_samples += recursion_steps.numel()
+
             # Accumulate losses
             total_losses['policy_loss'] += loss_dict['policy_loss']
             total_losses['value_loss'] += loss_dict['value_loss']
@@ -320,6 +328,12 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: ChessLoss,
     for key in total_losses:
         total_losses[key] /= num_batches
 
+    # Add average recursion steps if tracked
+    if num_recursion_samples > 0:
+        total_losses['avg_recursion_steps'] = total_recursion_steps / num_recursion_samples
+    else:
+        total_losses['avg_recursion_steps'] = 0.0
+
     return total_losses
 
 def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
@@ -333,6 +347,8 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
                    'reg_loss': 0, 'q_halt_loss': 0, 'q_continue_loss': 0, 'q_loss': 0,
                     'total_loss': 0, 'move_accuracy': 0}
     num_batches = 0
+    total_recursion_steps = 0
+    num_recursion_samples = 0
 
     for batch_idx, (planes, policy_target, value_target, best_q_target, ml_target) in enumerate(dataloader):
         planes = planes.to(device, non_blocking=True)
@@ -459,6 +475,12 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
                     print(f"  ... and {len(nan_params) - 5} more parameters")
                 raise RuntimeError(f"NaN detected in model parameters at batch {batch_idx}. Stopping training.")
 
+        # Track recursion steps if available (HRM/TRM models)
+        if "recursion_steps" in q_output:
+            recursion_steps = q_output["recursion_steps"]
+            total_recursion_steps += recursion_steps.sum().item()
+            num_recursion_samples += recursion_steps.numel()
+
         # Accumulate losses (unscaled for logging)
         total_losses['policy_loss'] += loss_dict['policy_loss']
         total_losses['value_loss'] += loss_dict['value_loss']
@@ -474,6 +496,12 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
     # Average losses and accuracy
     for key in total_losses:
         total_losses[key] /= num_batches
+
+    # Add average recursion steps if tracked
+    if num_recursion_samples > 0:
+        total_losses['avg_recursion_steps'] = total_recursion_steps / num_recursion_samples
+    else:
+        total_losses['avg_recursion_steps'] = 0.0
 
     return total_losses
 

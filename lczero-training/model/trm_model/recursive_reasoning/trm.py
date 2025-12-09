@@ -556,6 +556,8 @@ class TinyRecursiveReasoningModel_ACTV1(nn.Module):
         with torch.no_grad():
             # Step
             new_steps = new_steps + 1
+            # Add recursion steps to outputs for tracking
+            outputs["recursion_steps"] = new_steps.clone()
             is_last_step = new_steps >= self.config.halt_max_steps
             
             halted = is_last_step

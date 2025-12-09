@@ -61,7 +61,7 @@ class HRMAlphaZeroBridge(nn.Module):
         
         # Forward through HRM
         _, outputs = self.hrm_model(carry, batch)
-        
+
         # Extract policy and value
         pi = outputs['move_logits']  # Raw logits for AlphaZero
         v = outputs['value_logits']
@@ -70,6 +70,9 @@ class HRMAlphaZeroBridge(nn.Module):
         q_info["q_continue_logits"] = outputs['q_continue_logits']
         if "target_q_continue" in outputs:
             q_info["target_q_continue"] = outputs["target_q_continue"]
+        # Add recursion steps for tracking
+        if "recursion_steps" in outputs:
+            q_info["recursion_steps"] = outputs["recursion_steps"]
         moves_left = outputs["moves_left_logits"]
         return pi, v, moves_left, q_info
 
