@@ -128,7 +128,7 @@ def compare_with_pytorch():
     
     try:
         sys.path.append('/home/omerz/projects/ChessTypeBeat/lczero-training')
-        from pytorch_train import ChessDataset
+        from chess_dataset import ChessDataset
         
         dataset = ChessDataset(chunk_files, sample_rate=1)
         if len(dataset) > 0:
@@ -191,7 +191,7 @@ def analyze_policy_encoding():
         if chunk_files:
             try:
                 sys.path.append('/home/omerz/projects/ChessTypeBeat/lczero-training')
-                from pytorch_train import ChessDataset
+                from chess_dataset import ChessDataset
                 
                 dataset = ChessDataset(chunk_files, sample_rate=10)  # Sample every 10th
                 

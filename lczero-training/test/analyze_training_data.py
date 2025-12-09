@@ -11,7 +11,7 @@ from collections import defaultdict, Counter
 sys.path.append('/home/omerz/projects/ChessTypeBeat/lczero-training')
 sys.path.append('/home/omerz/projects/ChessTypeBeat/lczero-training/tf')
 
-from pytorch_train import ChessDataset
+from chess_dataset import ChessDataset
 from policy_index import policy_index
 
 def analyze_policy_patterns(dataset, num_samples=100):

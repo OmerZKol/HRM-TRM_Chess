@@ -68,7 +68,7 @@ def compare_raw_parsing():
     # Compare with PyTorch implementation
     print(f"\nPyTorch implementation:")
     try:
-        from pytorch_train import ChessDataset
+        from chess_dataset import ChessDataset
         dataset = ChessDataset([test_file], sample_rate=1)
         
         if len(dataset) > 0:
@@ -162,7 +162,7 @@ def compare_conversion_methods():
         # Try PyTorch conversion  
         print(f"\nTesting PyTorch conversion:")
         try:
-            from pytorch_train import ChessDataset
+            from chess_dataset import ChessDataset
             pt_dataset = ChessDataset.__new__(ChessDataset)
             pt_dataset.v6_struct = struct.Struct(V6_STRUCT_STRING)
             pt_dataset.expected_input_format = None
@@ -216,7 +216,7 @@ def compare_multiple_records():
         return
     
     try:
-        from pytorch_train import ChessDataset
+        from chess_dataset import ChessDataset
         dataset = ChessDataset(chunk_files, sample_rate=1)
         
         print(f"Testing {min(5, len(dataset))} records:")
@@ -263,7 +263,7 @@ def verify_data_integrity():
     chunk_files = glob.glob(os.path.join(data_path, "*.gz"))[:5]  # Test first 5 files
     
     try:
-        from pytorch_train import ChessDataset
+        from chess_dataset import ChessDataset
         dataset = ChessDataset(chunk_files, sample_rate=10)  # Sample every 10th
         
         print(f"Testing {len(dataset)} positions across {len(chunk_files)} files")
@@ -318,7 +318,7 @@ def main():
     
     # Import required constants
     global V6_STRUCT_STRING, V5_STRUCT_STRING, V4_STRUCT_STRING, V3_STRUCT_STRING
-    from pytorch_train import V6_STRUCT_STRING, V5_STRUCT_STRING, V4_STRUCT_STRING, V3_STRUCT_STRING
+    from chess_dataset import ChessDataset, V6_STRUCT_STRING, V5_STRUCT_STRING, V4_STRUCT_STRING, V3_STRUCT_STRING
     
     try:
         # 1. Compare raw parsing

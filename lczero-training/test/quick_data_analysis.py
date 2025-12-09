@@ -10,7 +10,7 @@ import torch
 sys.path.append('/home/omerz/projects/ChessTypeBeat/lczero-training')
 sys.path.append('/home/omerz/projects/ChessTypeBeat/lczero-training/tf')
 
-from pytorch_train import ChessDataset
+from chess_dataset import ChessDataset
 from policy_index import policy_index
 
 def quick_analysis():

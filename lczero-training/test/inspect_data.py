@@ -6,7 +6,7 @@ import struct
 import gzip
 import glob
 import os
-from pytorch_train import ChessDataset, V6_STRUCT_STRING
+from chess_dataset import ChessDataset, V6_STRUCT_STRING
 
 def inspect_single_record(record_bytes):
     """Inspect a single training record and show its contents"""

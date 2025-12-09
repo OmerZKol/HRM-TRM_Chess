@@ -12,7 +12,7 @@ import gzip
 sys.path.append('/home/omerz/projects/ChessTypeBeat/lczero-training')
 sys.path.append('/home/omerz/projects/ChessTypeBeat/lczero-training/tf')
 
-from pytorch_train import ChessDataset, V6_STRUCT_STRING
+from chess_dataset import ChessDataset, V6_STRUCT_STRING
 
 def manual_record_parsing():
     """Manually parse a record to verify our understanding"""
@@ -175,7 +175,7 @@ def run_training_compatibility_test():
     print("=" * 80)
     
     try:
-        from pytorch_train import ChessDataset, SimpleChessNet, ChessLoss
+        from chess_dataset import ChessDataset, SimpleChessNet, ChessLoss
         from torch.utils.data import DataLoader
         
         # Create small dataset
