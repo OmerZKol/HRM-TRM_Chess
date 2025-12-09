@@ -159,15 +159,15 @@ class AttentionPolicyHead(nn.Module):
         # Scaled dot-product attention: [batch, heads, 64, 64]
         dk = torch.tensor(self.head_dim, dtype=torch.float32, device=queries.device)
         attention_scores = torch.matmul(queries, keys.transpose(-2, -1)) / torch.sqrt(dk)
-        
+
         # Average across heads to get [batch, 64, 64] attention matrix
         policy_attention = attention_scores.mean(dim=1)
-        
+
         # Handle pawn promotions
         promotion_logits = self._compute_promotion_logits(hidden_states, policy_attention)
-        
-        # Scale attention scores
-        policy_attention_scaled = policy_attention / torch.sqrt(dk)
+
+        # Use policy_attention directly (already scaled once)
+        policy_attention_scaled = policy_attention
         
         # Flatten attention weights and promotion logits
         flattened_attention = policy_attention_scaled.reshape(batch_size, -1)  # [batch, 4096]
@@ -207,8 +207,8 @@ class AttentionPolicyHead(nn.Module):
         base_promo_logits = policy_attention[:, 48:56, 56:64]  # [batch, 8, 8]
         
         # Apply offsets for Q, R, B (Knight is default/base)
-        dk = torch.tensor(self.head_dim, dtype=torch.float32, device=promotion_offsets.device)
-        scaled_offsets = promotion_offsets * torch.sqrt(dk)
+        # Don't scale the offsets - they should be in the same scale as base_promo_logits
+        scaled_offsets = promotion_offsets
         
         # Create promotion logits for each piece type
         q_promo = (base_promo_logits + scaled_offsets[:, 0:1, :]).unsqueeze(-1)  # [batch, 8, 8, 1]
