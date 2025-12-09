@@ -65,11 +65,8 @@ class HRMAlphaZeroBridge(nn.Module):
 
         # Safety limit: halt_max_steps + 1 for initial halted state + 1 extra for safety
         max_iterations = self.hrm_model.config.halt_max_steps + 2
-        c = 0
         for iteration in range(max_iterations):
             carry, outputs = self.hrm_model(carry, batch)
-            print(c)
-            c+=1
             # Mark sequences that have halted (but haven't halted in previous iterations due to reset)
             # A sequence completes when it reaches a halted state
             has_completed = has_completed | carry.halted
