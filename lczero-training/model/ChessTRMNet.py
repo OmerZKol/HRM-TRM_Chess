@@ -7,8 +7,6 @@ from utils import *
 import argparse
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
 
 # Add TinyRecursiveModels to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'TinyRecursiveModels')))
@@ -39,4 +37,4 @@ class ChessTRMNet(nn.Module):
         pi, v, moves_left, q_info = self.bridge(s)
 
         # Return in AlphaZero format: log probabilities and tanh values
-        return F.log_softmax(pi, dim=1), torch.tanh(v), moves_left, q_info
+        return pi, torch.tanh(v), moves_left, q_info

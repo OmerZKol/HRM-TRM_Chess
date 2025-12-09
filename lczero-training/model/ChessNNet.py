@@ -8,8 +8,6 @@ from utils import *
 import argparse
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
 from model.HRM_model.hrm.hrm_act_v1 import HierarchicalReasoningModel_ACTV1
 sys.path.append('../..')
 from model.HRMBridge import HRMAlphaZeroBridge
@@ -30,5 +28,6 @@ class ChessNNet(nn.Module):
         # Use the bridge to handle HRM conversion
         pi, v, moves_left, q_info = self.bridge(s)
 
-        # Return in AlphaZero format: log probabilities and tanh values
-        return F.log_softmax(pi, dim=1), torch.tanh(v), moves_left, q_info
+        # Return raw logits (loss function will apply log_softmax)
+        # Don't apply log_softmax here - the loss function handles it
+        return pi, torch.tanh(v), moves_left, q_info
