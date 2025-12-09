@@ -163,26 +163,44 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
             if(criterion.model_type == "hrm" or criterion.model_type == "trm"):
                 with torch.autocast(device_type=device.type, dtype=torch.float16):
                     model_output = model(planes)
+                    policy_output, value_output, moves_left_output, q_output = model_output
+
+                    # NaN detection: Check model outputs
+                    if torch.isnan(policy_output).any():
+                        print(f"[NaN Detection] Batch {batch_idx}: NaN detected in policy_output (after forward)")
+                        raise RuntimeError(f"NaN detected in policy_output at batch {batch_idx}. Stopping training.")
+                    if torch.isnan(value_output).any():
+                        print(f"[NaN Detection] Batch {batch_idx}: NaN detected in value_output (after forward)")
+                        raise RuntimeError(f"NaN detected in value_output at batch {batch_idx}. Stopping training.")
+                    if torch.isnan(moves_left_output).any():
+                        print(f"[NaN Detection] Batch {batch_idx}: NaN detected in moves_left_output (after forward)")
+                        raise RuntimeError(f"NaN detected in moves_left_output at batch {batch_idx}. Stopping training.")
+
+                    # Calculate loss inside autocast context
+                    total_loss, loss_dict = criterion(policy_target, policy_output,
+                                              value_target, value_output,
+                                              ml_target, moves_left_output,
+                                              q_output, model)
             else:
                 model_output = model(planes)
-            policy_output, value_output, moves_left_output, q_output = model_output
+                policy_output, value_output, moves_left_output, q_output = model_output
 
-            # NaN detection: Check model outputs
-            if torch.isnan(policy_output).any():
-                print(f"[NaN Detection] Batch {batch_idx}: NaN detected in policy_output (after forward)")
-                raise RuntimeError(f"NaN detected in policy_output at batch {batch_idx}. Stopping training.")
-            if torch.isnan(value_output).any():
-                print(f"[NaN Detection] Batch {batch_idx}: NaN detected in value_output (after forward)")
-                raise RuntimeError(f"NaN detected in value_output at batch {batch_idx}. Stopping training.")
-            if torch.isnan(moves_left_output).any():
-                print(f"[NaN Detection] Batch {batch_idx}: NaN detected in moves_left_output (after forward)")
-                raise RuntimeError(f"NaN detected in moves_left_output at batch {batch_idx}. Stopping training.")
+                # NaN detection: Check model outputs
+                if torch.isnan(policy_output).any():
+                    print(f"[NaN Detection] Batch {batch_idx}: NaN detected in policy_output (after forward)")
+                    raise RuntimeError(f"NaN detected in policy_output at batch {batch_idx}. Stopping training.")
+                if torch.isnan(value_output).any():
+                    print(f"[NaN Detection] Batch {batch_idx}: NaN detected in value_output (after forward)")
+                    raise RuntimeError(f"NaN detected in value_output at batch {batch_idx}. Stopping training.")
+                if torch.isnan(moves_left_output).any():
+                    print(f"[NaN Detection] Batch {batch_idx}: NaN detected in moves_left_output (after forward)")
+                    raise RuntimeError(f"NaN detected in moves_left_output at batch {batch_idx}. Stopping training.")
 
-            # Calculate loss
-            total_loss, loss_dict = criterion(policy_target, policy_output,
-                                      value_target, value_output,
-                                      ml_target, moves_left_output,
-                                      q_output, model)
+                # Calculate loss
+                total_loss, loss_dict = criterion(policy_target, policy_output,
+                                          value_target, value_output,
+                                          ml_target, moves_left_output,
+                                          q_output, model)
             # Scale loss for gradient accumulation
             total_loss = total_loss / gradient_accumulation_steps
 

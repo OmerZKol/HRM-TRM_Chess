@@ -59,8 +59,30 @@ class HRMAlphaZeroBridge(nn.Module):
         for key in carry.current_data:
             carry.current_data[key] = carry.current_data[key].to(boards.device)
         
-        # Forward through HRM
-        _, outputs = self.hrm_model(carry, batch)
+        # Forward through HRM with looping until all sequences halt
+        # Track which sequences have completed (halted at least once)
+        has_completed = torch.zeros(batch_size, dtype=torch.bool, device=boards.device)
+
+        # Safety limit: halt_max_steps + 1 for initial halted state + 1 extra for safety
+        max_iterations = self.hrm_model.config.halt_max_steps + 2
+        c = 0
+        for iteration in range(max_iterations):
+            carry, outputs = self.hrm_model(carry, batch)
+            print(c)
+            c+=1
+            # Mark sequences that have halted (but haven't halted in previous iterations due to reset)
+            # A sequence completes when it reaches a halted state
+            has_completed = has_completed | carry.halted
+
+            # Exit when all sequences have completed at least once
+            if has_completed.all():
+                break
+        else:
+            # This should never happen - log a warning
+            print(f"Warning: HRM loop reached max iterations ({max_iterations}) without all sequences halting")
+            print(f"Halted status: {carry.halted}")
+            print(f"Has completed: {has_completed}")
+            print(f"Steps: {carry.steps if hasattr(carry, 'steps') else 'N/A'}")
 
         # Extract policy and value
         pi = outputs['move_logits']  # Raw logits for AlphaZero

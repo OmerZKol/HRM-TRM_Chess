@@ -195,10 +195,12 @@ class ChessDataset(Dataset):
             f"Plane length mismatch: expected {(8 * 13 * 1 + 8 * 1 * 1) * 8 * 8 * 4}, got {len(all_planes)}"
 
         # Convert to tensor and reshape to (112, 8, 8)
-        planes_tensor = torch.frombuffer(all_planes, dtype=torch.float32).view(112, 8, 8)
+        # Copy the buffer to make it writable and avoid PyTorch warnings
+        planes_array_float = np.frombuffer(all_planes, dtype=np.float32).copy()
+        planes_tensor = torch.from_numpy(planes_array_float).view(112, 8, 8)
 
         # Policy probabilities
-        probs_array = np.frombuffer(probs, dtype=np.float32)
+        probs_array = np.frombuffer(probs, dtype=np.float32).copy()
         policy_tensor = torch.from_numpy(probs_array)
 
         # Value targets (WDL format - matching chunkparser.py)

@@ -49,7 +49,7 @@ trm_config:
   # Halting configuration - SINGLE STEP
   halt_max_steps: 1
   halt_exploration_prob: 0.0
-  no_ACT_continue: true  # Simplified halting (TRM-specific)
+  no_ACT_continue: false  # Simplified halting (TRM-specific)
 
   # Chess-specific configuration (always enabled in TRM)
   square_feature_dim: 112

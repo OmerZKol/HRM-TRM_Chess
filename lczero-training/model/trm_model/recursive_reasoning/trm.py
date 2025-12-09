@@ -128,9 +128,8 @@ class TinyRecursiveReasoningModel_ACTV1Block(nn.Module):
 
         self.config = config
         if self.config.mlp_t:
-            self.puzzle_emb_len = -(self.config.puzzle_emb_ndim // -self.config.hidden_size) if self.config.puzzle_emb_len == 0 else self.config.puzzle_emb_len
             self.mlp_t = SwiGLU(
-                hidden_size=self.config.seq_len + self.puzzle_emb_len, # L
+                hidden_size=self.config.seq_len, # L
                 expansion=config.expansion,
             )
         else:
@@ -164,50 +163,19 @@ class TinyRecursiveReasoningModel_ACTV1Block(nn.Module):
         else:
             # Self Attention with residual scaling
             normed = rms_norm(hidden_states, variance_epsilon=self.norm_eps)
-            if torch.isnan(normed).any():
-                print(f"[Block NaN] NaN in rms_norm before attention")
-                print(f"  hidden_states stats: min={hidden_states.min():.4f}, max={hidden_states.max():.4f}, mean={hidden_states.mean():.4f}")
-                raise RuntimeError("NaN in rms_norm before attention")
 
             attn_out = self.self_attn(cos_sin=cos_sin, hidden_states=normed)
-            if torch.isnan(attn_out).any():
-                print(f"[Block NaN] NaN in attention output")
-                raise RuntimeError("NaN in attention output")
 
             scaled_attn = self.residual_scale * attn_out
-            if torch.isnan(scaled_attn).any():
-                print(f"[Block NaN] NaN after residual scaling attention (scale={self.residual_scale:.4f})")
-                print(f"  attn_out stats: min={attn_out.min():.4f}, max={attn_out.max():.4f}, mean={attn_out.mean():.4f}")
-                raise RuntimeError("NaN after residual scaling attention")
 
             hidden_states = hidden_states + scaled_attn
-            if torch.isnan(hidden_states).any():
-                print(f"[Block NaN] NaN after adding attention residual")
-                raise RuntimeError("NaN after adding attention residual")
 
         # Fully Connected with residual scaling
         normed = rms_norm(hidden_states, variance_epsilon=self.norm_eps)
-        if torch.isnan(normed).any():
-            print(f"[Block NaN] NaN in rms_norm before MLP")
-            print(f"  hidden_states stats: min={hidden_states.min():.4f}, max={hidden_states.max():.4f}, mean={hidden_states.mean():.4f}")
-            raise RuntimeError("NaN in rms_norm before MLP")
-
         out = self.mlp(normed)
-        if torch.isnan(out).any():
-            print(f"[Block NaN] NaN in MLP output")
-            raise RuntimeError("NaN in MLP output")
 
         scaled_mlp = self.residual_scale * out
-        if torch.isnan(scaled_mlp).any():
-            print(f"[Block NaN] NaN after residual scaling MLP (scale={self.residual_scale:.4f})")
-            print(f"  mlp_out stats: min={out.min():.4f}, max={out.max():.4f}, mean={out.mean():.4f}")
-            raise RuntimeError("NaN after residual scaling MLP")
-
         hidden_states = hidden_states + scaled_mlp
-        if torch.isnan(hidden_states).any():
-            print(f"[Block NaN] NaN after adding MLP residual")
-            raise RuntimeError("NaN after adding MLP residual")
-
         return hidden_states
 
 class TinyRecursiveReasoningModel_ACTV1ReasoningModule(nn.Module):
@@ -217,28 +185,14 @@ class TinyRecursiveReasoningModel_ACTV1ReasoningModule(nn.Module):
         self.norm_eps = norm_eps
 
     def forward(self, hidden_states: torch.Tensor, input_injection: torch.Tensor, **kwargs) -> torch.Tensor:
+        # Input injection (add)
         hidden_states = hidden_states + input_injection
-
-        # NaN detection: Check input injection result
-        if torch.isnan(hidden_states).any():
-            print(f"[L_level NaN] NaN after input_injection addition")
-            print(f"  hidden_states stats before: min={hidden_states.min():.4f}, max={hidden_states.max():.4f}")
-            print(f"  input_injection stats: min={input_injection.min():.4f}, max={input_injection.max():.4f}")
-
+        #Layers
         for layer_idx, layer in enumerate(self.layers):
             hidden_states = layer(hidden_states=hidden_states, **kwargs)
-            # NaN detection: Check after each layer
-            if torch.isnan(hidden_states).any():
-                print(f"[L_level NaN] NaN detected after layer {layer_idx}/{len(self.layers)}")
-                raise RuntimeError(f"NaN in L_level layer {layer_idx}")
 
         # Final norm (standard for pre-norm architectures)
         hidden_states = rms_norm(hidden_states, variance_epsilon=self.norm_eps)
-
-        # NaN detection: Check after final norm
-        if torch.isnan(hidden_states).any():
-            print(f"[L_level NaN] NaN detected after final rms_norm")
-            raise RuntimeError(f"NaN in L_level after final rms_norm")
 
         return hidden_states
 
@@ -425,40 +379,18 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         it = 0
         z_H, z_L = carry.z_H, carry.z_L
 
-        # NaN detection in forward pass
-        if torch.isnan(z_H).any():
-            print(f"[TRM NaN Detection] z_H has NaN before forward iterations")
-        if torch.isnan(z_L).any():
-            print(f"[TRM NaN Detection] z_L has NaN before forward iterations")
-        if torch.isnan(input_embeddings).any():
-            print(f"[TRM NaN Detection] input_embeddings has NaN")
-
         # H_cycles-1 without grad
         with torch.no_grad():
             for _H_step in range(self.config.H_cycles-1):
                 for _L_step in range(self.config.L_cycles):
                     z_H_plus_input = z_H + input_embeddings
-                    if torch.isnan(z_H_plus_input).any():
-                        print(f"[TRM NaN Detection] z_H + input_embeddings produced NaN (no_grad)")
                     z_L = self.L_level(z_L, z_H_plus_input, **seq_info)
-                    if torch.isnan(z_L).any():
-                        print(f"[TRM NaN Detection] z_L has NaN after L_level (no_grad)")
                 z_H = self.L_level(z_H, z_L, **seq_info)
-                if torch.isnan(z_H).any():
-                    print(f"[TRM NaN Detection] z_H has NaN after L_level (no_grad)")
         # 1 with grad
         for _L_step in range(self.config.L_cycles):
             z_H_plus_input = z_H + input_embeddings
-            if torch.isnan(z_H_plus_input).any():
-                print(f"[TRM NaN Detection] z_H + input_embeddings produced NaN (with grad)")
-                print(f"  z_H stats: min={z_H.min():.4f}, max={z_H.max():.4f}, mean={z_H.mean():.4f}")
-                print(f"  input_embeddings stats: min={input_embeddings.min():.4f}, max={input_embeddings.max():.4f}, mean={input_embeddings.mean():.4f}")
             z_L = self.L_level(z_L, z_H_plus_input, **seq_info)
-            if torch.isnan(z_L).any():
-                print(f"[TRM NaN Detection] z_L has NaN after L_level (with grad)")
         z_H = self.L_level(z_H, z_L, **seq_info)
-        if torch.isnan(z_H).any():
-            print(f"[TRM NaN Detection] z_H has NaN after final L_level")
 
         # Outputs
         new_carry = TinyRecursiveReasoningModel_ACTV1InnerCarry(z_H=z_H.detach(), z_L=z_L.detach())  # New carry no grad
@@ -567,7 +499,7 @@ class TinyRecursiveReasoningModel_ACTV1(nn.Module):
 
                 # Halt signal
                 # NOTE: During evaluation, always use max steps, this is to guarantee the same halting steps inside a batch for batching purposes
-                
+
                 if self.config.no_ACT_continue:
                     halted = halted | (q_halt_logits > 0)
                 else:
@@ -576,6 +508,9 @@ class TinyRecursiveReasoningModel_ACTV1(nn.Module):
                 # Exploration
                 min_halt_steps = (torch.rand_like(q_halt_logits) < self.config.halt_exploration_prob) * torch.randint_like(new_steps, low=2, high=self.config.halt_max_steps + 1)
                 halted = halted & (new_steps >= min_halt_steps)
+
+                # Force halt if reached max steps (override exploration constraints)
+                halted = halted | is_last_step
 
                 if not self.config.no_ACT_continue:
                     # Compute target Q

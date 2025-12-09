@@ -284,52 +284,51 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         input = input.permute(0, 2, 3, 1)
         input = input.reshape(-1, 64, original_shape[1])  # [batch, seq_len, features]
         # Handle different input formats:
-        if self.config.use_chess_tokenization:
-            if self.config.arc_encoding:
-                # tfprocess.py style embedding
-                # [batch, squares, features]
-                batch_size, num_squares, _ = input.shape
-                
-                # Step 1: Concatenate positional encoding
-                # self.pos_enc is [64, pos_enc_dim]
-                # expand to [batch, 64, pos_enc_dim]
-                positional_encoding = self.pos_enc.unsqueeze(0).expand(batch_size, -1, -1)
-                
-                # input is [batch, 64, 112], positional_encoding is [batch, 64, 16]
-                # concatenated becomes [batch, 64, 128]
-                concatenated_input = torch.cat([input.to(self.forward_dtype), positional_encoding], dim=2)
+        if self.config.arc_encoding:
+            # tfprocess.py style embedding
+            # [batch, squares, features]
+            batch_size, num_squares, _ = input.shape
+            
+            # Step 1: Concatenate positional encoding
+            # self.pos_enc is [64, pos_enc_dim]
+            # expand to [batch, 64, pos_enc_dim]
+            positional_encoding = self.pos_enc.unsqueeze(0).expand(batch_size, -1, -1)
+            
+            # input is [batch, 64, 112], positional_encoding is [batch, 64, 16]
+            # concatenated becomes [batch, 64, 128]
+            concatenated_input = torch.cat([input.to(self.forward_dtype), positional_encoding], dim=2)
 
-                # Step 2: Linear projection
-                # concatenated_input is [batch, 64, 128] -> reshape for linear
-                input_flat = concatenated_input.view(batch_size * num_squares, -1)
-                projected = self.square_projection(input_flat) # [batch*64, hidden_size]
-                embedding = projected.view(batch_size, num_squares, self.config.hidden_size)
+            # Step 2: Linear projection
+            # concatenated_input is [batch, 64, 128] -> reshape for linear
+            input_flat = concatenated_input.view(batch_size * num_squares, -1)
+            projected = self.square_projection(input_flat) # [batch*64, hidden_size]
+            embedding = projected.view(batch_size, num_squares, self.config.hidden_size)
 
-                # Step 3: Gating (gating includes activation internally)
-                embedding = self.input_gate(embedding)
+            # Step 3: Gating (gating includes activation internally)
+            embedding = self.input_gate(embedding)
 
-            else:
-                # Original implementation
-                # [batch, squares, features] - chess square tokenization
-                batch_size, num_squares, features_per_square = input.shape
-                
-                # Step 1: Linear projection for each square
-                # Reshape to [batch * squares, features] for projection
-                input_flat = input.view(batch_size * num_squares, features_per_square).to(self.forward_dtype)
-                
-                # Apply linear projection: [batch * squares, features] -> [batch * squares, hidden_size]
-                projected = self.square_projection(input_flat)
-                
-                # Reshape back to [batch, squares, hidden_size]
-                embedding = projected.view(batch_size, num_squares, self.config.hidden_size)
-                
-                # Step 2: Add per-square positional encodings
-                # Each square gets its own learned offset and scale
-                pos_offsets = self.square_pos_offsets.unsqueeze(0)  # [1, squares, hidden_size]
-                pos_scales = self.square_pos_scales.unsqueeze(0)   # [1, squares, hidden_size]
-                
-                # Apply positional encoding: embedding * scale + offset
-                embedding = embedding * pos_scales + pos_offsets
+        else:
+            # Original implementation
+            # [batch, squares, features] - chess square tokenization
+            batch_size, num_squares, features_per_square = input.shape
+            
+            # Step 1: Linear projection for each square
+            # Reshape to [batch * squares, features] for projection
+            input_flat = input.view(batch_size * num_squares, features_per_square).to(self.forward_dtype)
+            
+            # Apply linear projection: [batch * squares, features] -> [batch * squares, hidden_size]
+            projected = self.square_projection(input_flat)
+            
+            # Reshape back to [batch, squares, hidden_size]
+            embedding = projected.view(batch_size, num_squares, self.config.hidden_size)
+            
+            # Step 2: Add per-square positional encodings
+            # Each square gets its own learned offset and scale
+            pos_offsets = self.square_pos_offsets.unsqueeze(0)  # [1, squares, hidden_size]
+            pos_scales = self.square_pos_scales.unsqueeze(0)   # [1, squares, hidden_size]
+            
+            # Apply positional encoding: embedding * scale + offset
+            embedding = embedding * pos_scales + pos_offsets
             
         return embedding
 
@@ -468,14 +467,18 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
 
             # if training, and ACT is enabled
             if self.training and (self.config.halt_max_steps > 1):
+
                 # Halt signal
                 # NOTE: During evaluation, always use max steps, this is to guarantee the same halting steps inside a batch for batching purposes
+
                 halted = halted | (q_halt_logits > q_continue_logits)
 
                 # Exploration
                 min_halt_steps = (torch.rand_like(q_halt_logits) < self.config.halt_exploration_prob) * torch.randint_like(new_steps, low=2, high=self.config.halt_max_steps + 1)
-
                 halted = halted & (new_steps >= min_halt_steps)
+
+                # Force halt if reached max steps (override exploration constraints)
+                halted = halted | is_last_step
 
                 # Compute target Q
                 # NOTE: No replay buffer and target networks for computing target Q-value.

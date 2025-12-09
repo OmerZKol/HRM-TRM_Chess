@@ -50,10 +50,7 @@ trm_config:
   # Halting configuration - MULTI-STEP with adaptive computation
   halt_max_steps: 4
   halt_exploration_prob: 0.1
-  no_ACT_continue: False  # Simplified halting (TRM-specific)
-
-  # Q-loss configuration - DISABLE q-continue loss
-  use_q_continue: false
+  no_ACT_continue: true  # Simplified halting (TRM-specific)
 
   # Chess-specific configuration (always enabled in TRM)
   square_feature_dim: 112

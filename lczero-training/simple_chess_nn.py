@@ -72,15 +72,26 @@ class ChessLoss(nn.Module):
         """Policy cross-entropy loss with illegal move masking"""
         # Mask illegal moves (marked as -1 in target)
         mask = policy_targets >= 0
-        policy_targets = torch.clamp(policy_targets, min=0.0)
+        policy_targets_clamped = torch.clamp(policy_targets, min=0.0)
 
         # Normalize to valid probability distribution
-        policy_targets = policy_targets / (policy_targets.sum(dim=1, keepdim=True) + 1e-8)
+        target_sum = policy_targets_clamped.sum(dim=1, keepdim=True)
+        policy_targets_normalized = policy_targets_clamped / (target_sum + 1e-8)
+
         # Set logits for masked (illegal) moves to a large negative value
-        policy_outputs = policy_outputs.clone()
-        policy_outputs[~mask] = -1e9
-        # Cross-entropy with target probabilities
-        return F.cross_entropy(policy_outputs, policy_targets, reduction='mean')
+        # Use -1e4 instead of -1e9 to avoid numerical issues with float16
+        policy_outputs_masked = policy_outputs.clone()
+        policy_outputs_masked[~mask] = -1e4
+
+        # Compute log probabilities from logits
+        log_probs = F.log_softmax(policy_outputs_masked, dim=1)
+
+        # Cross-entropy: -sum(target * log_prob)
+        # Apply mask to zero out illegal moves before multiplication
+        log_probs_legal = log_probs * mask.float()
+        loss = -torch.mean(torch.sum(policy_targets_normalized * log_probs_legal, dim=1))
+
+        return loss
 
     def value_loss(self, value_targets: torch.Tensor, value_outputs: torch.Tensor) -> torch.Tensor:
         """WDL value cross-entropy loss"""
@@ -193,8 +204,8 @@ class ChessLoss(nn.Module):
             if self.config.get('hrm_config').get('halt_max_steps') > 1:
                 q_halt_loss = self.loss_q_halt(policy_targets, policy_outputs, value_targets, value_outputs, q_info)
                 # Check if use_q_continue is enabled (default: True for backwards compatibility)
-                use_q_continue = self.config.get('hrm_config').get('use_q_continue', True)
-                if use_q_continue:
+                no_ACT_continue = self.config.get('hrm_config').get('no_ACT_continue', True)
+                if not no_ACT_continue:
                     q_continue_loss = self.loss_q_continue(q_info)
                     q_loss = 0.5 * (q_halt_loss + q_continue_loss)
                 else:
@@ -205,8 +216,8 @@ class ChessLoss(nn.Module):
             if self.config.get('trm_config').get('halt_max_steps') > 1:
                 q_halt_loss = self.loss_q_halt(policy_targets, policy_outputs, value_targets, value_outputs, q_info)
                 # Check if use_q_continue is enabled (default: True for backwards compatibility)
-                use_q_continue = self.config.get('trm_config').get('use_q_continue', True)
-                if use_q_continue:
+                no_ACT_continue = self.config.get('trm_config').get('no_ACT_continue', True)
+                if not no_ACT_continue:
                     q_continue_loss = self.loss_q_continue(q_info)
                     q_loss = 0.5 * (q_halt_loss + q_continue_loss)
                 else:

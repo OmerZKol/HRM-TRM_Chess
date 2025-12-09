@@ -2,7 +2,7 @@
 # Model: ChessTRMNet (TinyRecursiveReasoningModel_ACTV1) - Multi-step adaptive reasoning
 
 # Training parameters
-batch_size: 256
+batch_size: 32
 learning_rate: 0.0001
 epochs: 70
 
@@ -48,7 +48,7 @@ trm_config:
   # Halting configuration - MULTI-STEP with adaptive computation
   halt_max_steps: 4
   halt_exploration_prob: 0.1
-  no_ACT_continue: False  # Simplified halting (TRM-specific)
+  no_ACT_continue: false  # Simplified halting (TRM-specific)
 
   # Chess-specific configuration (always enabled in TRM)
   square_feature_dim: 112

@@ -52,7 +52,7 @@ hrm_config:
   halt_exploration_prob: 0.1
 
   # Q-loss configuration - DISABLE q-continue loss
-  use_q_continue: false
+  no_ACT_continue: true
 
   # Chess-specific configuration
   use_chess_tokenization: true
