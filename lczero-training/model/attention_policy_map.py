@@ -114,11 +114,10 @@ class AttentionPolicyHead(nn.Module):
         self.head_dim = hidden_size // num_heads
         
         # Query and Key projections for policy attention
-        self.policy_q = nn.Linear(hidden_size, hidden_size, bias=False)
-        self.policy_k = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.policy_q = nn.Linear(hidden_size, hidden_size, bias=True)
+        self.policy_k = nn.Linear(hidden_size, hidden_size, bias=True)
         
         # Promotion offset prediction
-        self.promotion_keys = nn.Linear(hidden_size, hidden_size, bias=False)
         self.promotion_offsets = nn.Linear(hidden_size, 4, bias=False)
         
         # Attention policy mapping matrix
@@ -132,7 +131,8 @@ class AttentionPolicyHead(nn.Module):
         """Initialize weights following original tfprocess.py"""
         nn.init.xavier_normal_(self.policy_q.weight)
         nn.init.xavier_normal_(self.policy_k.weight)
-        nn.init.xavier_normal_(self.promotion_keys.weight)
+        nn.init.zeros_(self.policy_q.bias)
+        nn.init.zeros_(self.policy_k.bias)
         nn.init.xavier_normal_(self.promotion_offsets.weight)
     
     def forward(self, hidden_states):
@@ -152,26 +152,21 @@ class AttentionPolicyHead(nn.Module):
         queries = self.policy_q(hidden_states)  # [batch, 64, hidden_size]
         keys = self.policy_k(hidden_states)     # [batch, 64, hidden_size]
         
-        # Multi-head attention computation
-        queries = queries.view(batch_size, 64, self.num_heads, self.head_dim).transpose(1, 2)
-        keys = keys.view(batch_size, 64, self.num_heads, self.head_dim).transpose(1, 2)
+        # Direct matmul without multi-head reshaping (matches TF)
+        # [batch, 64, hidden_size] @ [batch, hidden_size, 64] = [batch, 64, 64]
+        matmul_qk = torch.matmul(queries, keys.transpose(-2, -1))
+
+        # Compute promotion logits using UNSCALED attention
+        promotion_logits = self._compute_promotion_logits(keys, matmul_qk)
+
+        # Scale by 1/sqrt(d_model)
+        dk = torch.sqrt(torch.tensor(self.hidden_size, dtype=matmul_qk.dtype, device=matmul_qk.device))
+        policy_attn_logits = matmul_qk / dk  # [batch, 64, 64]
+        promotion_logits = promotion_logits / dk  # [batch, 8, 24]
         
-        # Scaled dot-product attention: [batch, heads, 64, 64]
-        dk = torch.tensor(self.head_dim, dtype=torch.float32, device=queries.device)
-        attention_scores = torch.matmul(queries, keys.transpose(-2, -1)) / torch.sqrt(dk)
-
-        # Average across heads to get [batch, 64, 64] attention matrix
-        policy_attention = attention_scores.mean(dim=1)
-
-        # Handle pawn promotions
-        promotion_logits = self._compute_promotion_logits(hidden_states, policy_attention)
-
-        # Use policy_attention directly (already scaled once)
-        policy_attention_scaled = policy_attention
-        
-        # Flatten attention weights and promotion logits
-        flattened_attention = policy_attention_scaled.reshape(batch_size, -1)  # [batch, 4096]
-        flattened_promotions = promotion_logits.reshape(batch_size, -1)        # [batch, 192]
+        # Flatten and concatenate
+        flattened_attention = policy_attn_logits.reshape(batch_size, -1)  # [batch, 4096]
+        flattened_promotions = promotion_logits.reshape(batch_size, -1)   # [batch, 192]
         
         # Concatenate: [batch, 4288] = [batch, 4096+192]
         combined = torch.cat([flattened_attention, flattened_promotions], dim=1)
@@ -179,9 +174,9 @@ class AttentionPolicyHead(nn.Module):
         # Apply policy mapping: [batch, 4288] @ [4288, 1858] = [batch, 1858]
         policy_logits = torch.matmul(combined, self.policy_map)
         
-        return policy_logits, policy_attention
+        return policy_logits, policy_attn_logits
     
-    def _compute_promotion_logits(self, hidden_states, policy_attention):
+    def _compute_promotion_logits(self, keys, policy_attention):
         """
         Compute promotion-specific logits for pawn promotion moves.
         
@@ -190,36 +185,39 @@ class AttentionPolicyHead(nn.Module):
             policy_attention: [batch, 64, 64]
             
         Returns:
-            promotion_logits: [batch, 8, 24] - 8 files × 24 promotion moves per file
+            promotion_logits: [batch, 8, 24] - 8 files x 24 promotion moves per file
         """
-        batch_size = hidden_states.shape[0]
+        batch_size = keys.shape[0]
         
-        # Get promotion keys from 7th rank squares (squares 48-55)
-        promotion_squares = hidden_states[:, 48:56, :]  # [batch, 8, hidden_size]
-        promotion_keys = self.promotion_keys(promotion_squares)  # [batch, 8, hidden_size]
+        # Get promotion keys from 8th rank squares (squares 56-63)
+        promotion_keys = keys[:, -8:, :]  # [batch, 8, hidden_size]
+
+        # dk for scaling offsets
+        dk = torch.sqrt(torch.tensor(self.hidden_size, dtype=keys.dtype, device=keys.device))
         
-        # Generate promotion offsets (Q, R, B relative to default Knight)
+        # Generate promotion offsets (Q, R, B, Knight)
         promotion_offsets = self.promotion_offsets(promotion_keys)  # [batch, 8, 4]
-        promotion_offsets = promotion_offsets.transpose(-2, -1)  # [batch, 4, 8]
-        
-        # Base promotion logits from attention (7th rank to 8th rank)
-        # Squares 48-55 (7th rank) to 56-63 (8th rank)
-        base_promo_logits = policy_attention[:, 48:56, 56:64]  # [batch, 8, 8]
-        
-        # Apply offsets for Q, R, B (Knight is default/base)
-        # Don't scale the offsets - they should be in the same scale as base_promo_logits
-        scaled_offsets = promotion_offsets
-        
-        # Create promotion logits for each piece type
-        q_promo = (base_promo_logits + scaled_offsets[:, 0:1, :]).unsqueeze(-1)  # [batch, 8, 8, 1]
-        r_promo = (base_promo_logits + scaled_offsets[:, 1:2, :]).unsqueeze(-1)  # [batch, 8, 8, 1]
-        b_promo = (base_promo_logits + scaled_offsets[:, 2:3, :]).unsqueeze(-1)  # [batch, 8, 8, 1]
-        
+        promotion_offsets = promotion_offsets.transpose(-2, -1) * dk  # [batch, 4, 8]
+
+        # Knight offset is added to Q, R, B
+        promotion_offsets = promotion_offsets[:, :3, :] + promotion_offsets[:, 3:4, :]  # [batch, 3, 8]
+
+        # Base promotion logits: from 7th rank (48-55) to 8th rank (56-63)
+        # Using TF indexing: matmul_qk[:, -16:-8, -8:]
+        base_promo_logits = policy_attention[:, 48:56, 56:64]  # [batch, 8, 8] - knight promotions
+
+        # Create promotion logits for each piece type (Q, R, B offset from Knight)
+        q_promo = (base_promo_logits + promotion_offsets[:, 0:1, :]).unsqueeze(-1)  # [batch, 8, 8, 1]
+        r_promo = (base_promo_logits + promotion_offsets[:, 1:2, :]).unsqueeze(-1)  # [batch, 8, 8, 1]
+        b_promo = (base_promo_logits + promotion_offsets[:, 2:3, :]).unsqueeze(-1)  # [batch, 8, 8, 1]
+
         # Concatenate: [batch, 8, 8, 3]
         promotion_logits = torch.cat([q_promo, r_promo, b_promo], dim=-1)
-        
-        # Reshape to [batch, 8, 24] (8 files × 3 piece types × 8 target squares)
-        return promotion_logits.reshape(batch_size, 8, 24)
+
+        # Reshape to [batch, 8, 24] and scale by 1/sqrt(dk) (TF line 1518)
+        promotion_logits = promotion_logits.reshape(batch_size, 8, 24)
+
+        return promotion_logits
 
 
 def test_attention_policy_map():
