@@ -1,0 +1,60 @@
+# Configuration for Transformer Chess Neural Network
+# Model: TransformerChessNet - Pure transformer architecture with direct linear policy
+
+# Training parameters
+batch_size: 256
+learning_rate: 0.0001
+epochs: 40
+
+name: "transformer_linear"
+
+# Data sampling
+sample_rate: 1  # Use all data (set to higher value for faster training with less data)
+
+# Training optimizations
+num_workers: 4  # Number of parallel data loading workers (0 = single-threaded)
+use_amp: true  # Use Automatic Mixed Precision training (faster on modern GPUs)
+gradient_accumulation_steps: 1  # Accumulate gradients over N steps (effective_batch = batch_size * N)
+
+# Loss weights
+policy_loss_weight: 1.0
+value_loss_weight: 1.0
+moves_left_loss_weight: 0.01
+
+# Model architecture
+model_type: transformer
+board_x: 8
+board_y: 8
+action_size: 1858
+
+# Transformer specific parameters
+transformer_config:
+  # Input processing
+  input_channels: 112  # LCZero board representation (historical + game state)
+
+  # Model dimensions
+  hidden_size: 512     # Transformer hidden dimension (embedding size)
+  num_layers: 4        # Number of transformer blocks (depth)
+  num_heads: 8         # Number of attention heads (must divide hidden_size)
+  expansion: 4.0       # FFN expansion factor (FFN_dim = hidden_size * expansion)
+
+  # Positional encodings
+  max_position_embeddings: 64  # Maximum sequence length (64 squares on chessboard)
+  rope_base: 10000             # RoPE (Rotary Position Embedding) theta base
+
+  # Policy head type
+  use_attention_policy: false  # Use direct linear policy (faster, simpler)
+
+  # Output heads
+  use_wdl: true               # Use Win-Draw-Loss value head
+  value_embedding_size: 32    # Value head embedding dimension
+  moves_embedding_size: 8     # Moves left head embedding dimension
+
+  # Normalization
+  rms_norm_eps: 1.0e-5 # RMS normalization epsilon for numerical stability
+
+# Notes:
+# - This config uses a direct linear policy head (simpler than attention-based)
+# - Faster training/inference but may not capture spatial relationships as well
+# - Good for experimentation and baseline comparison
+# - Can train larger/deeper models with same compute budget

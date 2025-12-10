@@ -32,16 +32,19 @@ tar -xf training-run1--20250209-1017.tar
 cd lczero-training
 
 # Train Simple CNN model
-python pytorch_train.py --config config/simple_chess_nn.yaml --data-path data/training-run1--20250209-1017
+python pytorch_train.py --config config/cnn/simple_chess_nn.yaml --data-path data/training-run1--20250209-1017
 
 # Train Transformer model
-python pytorch_train.py --config config/transformer_chess_nn.yaml --data-path data/training-run1--20250209-1017
+python pytorch_train.py --config config/transformer/transformer_chess_nn.yaml --data-path data/training-run1--20250209-1017
 
 # Train HRM model (single-step, halt_max_steps=1)
-python pytorch_train.py --config config/hrm_halt1.yaml --data-path data/training-run1--20250209-1017
+python pytorch_train.py --config config/hrm/hrm_halt1.yaml --data-path data/training-run1--20250209-1017
 
 # Train HRM model (multi-step adaptive, halt_max_steps=4)
-python pytorch_train.py --config config/hrm_halt4.yaml --data-path data/training-run1--20250209-1017
+python pytorch_train.py --config config/hrm/hrm_halt4.yaml --data-path data/training-run1--20250209-1017
+
+# Train TRM model (single-step, halt_max_steps=1)
+python pytorch_train.py --config config/trm/trm_halt1.yaml --data-path data/training-run1--20250209-1017
 
 # View training logs with TensorBoard
 tensorboard --logdir runs/

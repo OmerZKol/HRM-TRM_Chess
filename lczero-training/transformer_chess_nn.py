@@ -185,30 +185,50 @@ class TransformerChessNet(nn.Module):
     3. Output heads: Policy (attention-based), value (WDL), moves left
     """
     
-    def __init__(
-        self,
-        board_size=None,  # For compatibility with other models - (8,8) 
-        policy_size=1858,
-        input_channels=112,
-        hidden_size=512,
-        num_layers=4,
-        num_heads=8,
-        expansion=4.0,
-        max_position_embeddings=64,
-        rope_base=10000,
-        use_wdl=True,
-        rms_norm_eps=1e-5
-    ):
+    def __init__(self, config=None, board_size=None):
+        """
+        Initialize TransformerChessNet.
+
+        Args:
+            config: Configuration dictionary with 'transformer_config' section
+            board_size: Board dimensions (for compatibility with HRM/TRM) - must be (8,8)
+        """
         super().__init__()
-        
+
         # Validate board_size for compatibility
         if board_size is not None and board_size != (8, 8):
             raise ValueError(f"Only (8, 8) board size is supported, got {board_size}")
-        
+
+        # Extract transformer config or use defaults
+        if config is not None:
+            transformer_config = config.get('transformer_config', {})
+            policy_size = config.get('action_size', 1858)
+        else:
+            # Fallback to defaults if no config provided (for backward compatibility)
+            transformer_config = {}
+            policy_size = 1858
+
+        # Extract parameters from config
+        input_channels = transformer_config.get('input_channels', 112)
+        hidden_size = transformer_config.get('hidden_size', 512)
+        num_layers = transformer_config.get('num_layers', 4)
+        num_heads = transformer_config.get('num_heads', 8)
+        expansion = transformer_config.get('expansion', 4.0)
+        max_position_embeddings = transformer_config.get('max_position_embeddings', 64)
+        rope_base = transformer_config.get('rope_base', 10000)
+        use_wdl = transformer_config.get('use_wdl', True)
+        rms_norm_eps = transformer_config.get('rms_norm_eps', 1e-5)
+
+        # Policy head configuration
+        use_attention_policy = transformer_config.get('use_attention_policy', True)
+        value_embedding_size = transformer_config.get('value_embedding_size', 32)
+        moves_embedding_size = transformer_config.get('moves_embedding_size', 8)
+
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.num_heads = num_heads
         self.policy_size = policy_size
+        self.use_attention_policy = use_attention_policy
         
         # Board embedding
         self.board_embedding = ChessBoardEmbedding(
@@ -244,17 +264,28 @@ class TransformerChessNet(nn.Module):
             
         # Final normalization
         self.final_norm_eps = rms_norm_eps
-        
-        # Output heads
-        self.policy_head = AttentionPolicyHead(
-            hidden_size=hidden_size,
-            num_heads=num_heads
-        )
-        
+
+        # Output heads - choose policy head type
+        if use_attention_policy:
+            # Attention-based policy head (like Leela Chess Zero)
+            self.policy_head = AttentionPolicyHead(
+                hidden_size=hidden_size,
+                num_heads=num_heads
+            )
+        else:
+            # Direct linear policy head (simpler, faster)
+            self.policy_head = CastedLinear(hidden_size, policy_size, bias=True)
+            # Initialize with small weights for stable training
+            with torch.no_grad():
+                self.policy_head.weight.normal_(0, 0.1)
+                if self.policy_head.bias is not None:
+                    self.policy_head.bias.zero_()
+
+        # Value and moves left heads
         self.value_moves_heads = CombinedTensorFlowStyleHeads(
             hidden_size=hidden_size,
-            value_embedding_size=32,
-            moves_embedding_size=8,
+            value_embedding_size=value_embedding_size,
+            moves_embedding_size=moves_embedding_size,
             use_wdl=use_wdl
         )
         
@@ -305,19 +336,26 @@ class TransformerChessNet(nn.Module):
         
         # Convert back to float32 for output heads (which use standard nn.Linear)
         hidden_states_f32 = hidden_states.to(torch.float32)
-        
-        # Policy head (uses attention mechanism)
-        policy_logits, policy_attention = self.policy_head(hidden_states_f32)
-        
+
+        # Policy head - handle both attention-based and direct linear
+        if self.use_attention_policy:
+            # Attention-based policy: returns logits and attention weights
+            policy_logits, policy_attention = self.policy_head(hidden_states_f32)
+        else:
+            # Direct linear policy: use first token (like value head)
+            policy_logits = self.policy_head(hidden_states_f32[:, 0, :])  # [batch, policy_size]
+            policy_attention = None  # No attention weights for direct policy
+
         # Value and moves left heads (use all spatial information)
         value_logits, moves_left = self.value_moves_heads(hidden_states_f32)
-        
+
         # Additional info for analysis/debugging
         info_dict = {
-            'policy_attention': policy_attention,  # [batch, 64, 64]
+            'policy_attention': policy_attention,  # [batch, 64, 64] or None
             'hidden_states': hidden_states,        # [batch, 64, hidden_size]
+            'use_attention_policy': self.use_attention_policy
         }
-        
+
         return policy_logits, value_logits, moves_left, info_dict
 
 
@@ -331,27 +369,29 @@ def count_parameters(model):
 def test_transformer_chess_net():
     """Test the transformer chess model."""
     print("Testing Transformer Chess Model...")
-    
+
     # Model configuration
     batch_size = 4
-    input_channels = 112
-    hidden_size = 512
-    num_layers = 6
-    num_heads = 8
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # Create model
-    model = TransformerChessNet(
-        input_channels=input_channels,
-        hidden_size=hidden_size,
-        num_layers=num_layers,
-        num_heads=num_heads,
-        expansion=4.0,
-        policy_size=1858,
-        use_wdl=True
-    ).to(device)
-    
+
+    # Create test config
+    config = {
+        'action_size': 1858,
+        'transformer_config': {
+            'input_channels': 112,
+            'hidden_size': 512,
+            'num_layers': 6,
+            'num_heads': 8,
+            'expansion': 4.0,
+            'use_wdl': True
+        }
+    }
+
+    # Create model using config (matches training script interface)
+    model = TransformerChessNet(config, board_size=(8, 8)).to(device)
+
     # Create test input (random board)
-    board_input = torch.randn(batch_size, input_channels, 8, 8).to(device)
+    board_input = torch.randn(batch_size, 112, 8, 8).to(device)
     print(f"Input shape: {board_input.shape}")
     
     # Forward pass

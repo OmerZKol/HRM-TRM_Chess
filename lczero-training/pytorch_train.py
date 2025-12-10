@@ -317,8 +317,29 @@ def load_model(args, config, device):
                     print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
                 else:
                     model.load_state_dict(checkpoint)
-            else:
+            elif config.get("model_type") == 'hrm':
                 model = ChessNNet(config, (8,8))
+                if 'model_state_dict' in checkpoint:
+                    model.load_state_dict(checkpoint['model_state_dict'])
+                    print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
+                else:
+                    model.load_state_dict(checkpoint)
+            elif config.get("model_type") == 'trm':
+                model = ChessTRMNet(config, (8,8))
+                if 'model_state_dict' in checkpoint:
+                    model.load_state_dict(checkpoint['model_state_dict'])
+                    print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
+                else:
+                    model.load_state_dict(checkpoint)
+            elif config.get("model_type") == 'transformer':
+                model = TransformerChessNet(config, (8,8))
+                if 'model_state_dict' in checkpoint:
+                    model.load_state_dict(checkpoint['model_state_dict'])
+                    print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
+                else:
+                    model.load_state_dict(checkpoint)
+            else:
+                raise ValueError(f"Unknown model type when loading checkpoint: {config.get('model_type')}")
             return model.to(device)
     if(config.get("model_type") == "simple"):
         return SimpleChessNet().to(device)
@@ -327,7 +348,7 @@ def load_model(args, config, device):
     if(config.get("model_type") == "trm"):
         return ChessTRMNet(config, (8,8)).to(device)
     if(config.get("model_type") == "transformer"):
-        return TransformerChessNet((8,8), 1858).to(device)
+        return TransformerChessNet(config, (8,8)).to(device)
 
 def save_model(model, optimizer, scheduler, config, args, epoch, losses):
     """Save model with training info"""
