@@ -56,21 +56,33 @@ class ChessDataset(Dataset):
         """Load and parse all training records from chunk files"""
         records = []
 
-        for chunk_file in self.chunk_files:
+        print(f"[ChessDataset] Starting to load {len(self.chunk_files)} chunk files...")
+        for idx, chunk_file in enumerate(self.chunk_files):
+            print(f"[ChessDataset] Loading chunk {idx+1}/{len(self.chunk_files)}: {chunk_file}")
             try:
                 if chunk_file.endswith('.gz'):
+                    print(f"[ChessDataset]   Opening gzip file...")
                     with gzip.open(chunk_file, 'rb') as f:
                         chunk_data = f.read()
+                    print(f"[ChessDataset]   Read {len(chunk_data)} bytes")
                 else:
+                    print(f"[ChessDataset]   Opening regular file...")
                     with open(chunk_file, 'rb') as f:
                         chunk_data = f.read()
+                    print(f"[ChessDataset]   Read {len(chunk_data)} bytes")
 
-                records.extend(self._sample_records(chunk_data))
+                print(f"[ChessDataset]   Sampling records...")
+                sampled = self._sample_records(chunk_data)
+                print(f"[ChessDataset]   Sampled {len(sampled)} records")
+                records.extend(sampled)
+                print(f"[ChessDataset]   Total records so far: {len(records)}")
 
             except Exception as e:
-                print(f"Error loading {chunk_file}: {e}")
+                print(f"[ChessDataset] Error loading {chunk_file}: {e}")
 
+        print(f"[ChessDataset] Shuffling {len(records)} records...")
         random.shuffle(records)
+        print(f"[ChessDataset] Finished loading all records!")
         return records
 
     def _sample_records(self, chunkdata: bytes) -> List[bytes]:

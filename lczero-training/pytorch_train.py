@@ -427,11 +427,17 @@ def main():
 
     train_split = int(0.9 * len(chunk_files)) # 90% for training, 10% for validation
 
+    print(f"[Main] Creating training dataset with {train_split} chunk files...")
     train_dataset = ChessDataset(chunk_files[:train_split], sample_rate=config.get('sample_rate', 0))  # Use higher sampling for speed
+    print(f"[Main] Training dataset created successfully!")
+
+    print(f"[Main] Creating validation dataset with {len(chunk_files) - train_split} chunk files...")
     valid_dataset = ChessDataset(chunk_files[train_split:], sample_rate=config.get('sample_rate', 0))
+    print(f"[Main] Validation dataset created successfully!")
 
     # Optimize data loading with multiple workers and pinned memory
     num_workers = config.get('num_workers', 4)  # Use 4 workers by default for parallel data loading
+    print(f"[Main] Creating DataLoaders with {num_workers} workers...")
     train_dataloader = DataLoader(train_dataset, batch_size=config.get('batch_size', 64),
                             shuffle=True, num_workers=num_workers, pin_memory=True,
                             persistent_workers=True if num_workers > 0 else False,
@@ -440,6 +446,7 @@ def main():
                             shuffle=False, num_workers=num_workers, pin_memory=True,
                             persistent_workers=True if num_workers > 0 else False,
                             prefetch_factor=2 if num_workers > 0 else None)
+    print(f"[Main] DataLoaders created successfully!")
 
     print(f'Training dataset size: {len(train_dataset)}')
 
