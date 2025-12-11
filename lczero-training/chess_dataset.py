@@ -33,7 +33,6 @@ class ChessDataset(Dataset):
     def __init__(self, chunk_files: List[str], sample_rate: int = 1,
                  expected_input_format: int = None, shuffle_size: int = 8192):
         self.chunk_files = chunk_files
-        self.sample_rate = sample_rate
         self.expected_input_format = expected_input_format
         self.shuffle_size = shuffle_size
 
@@ -56,33 +55,21 @@ class ChessDataset(Dataset):
         """Load and parse all training records from chunk files"""
         records = []
 
-        print(f"[ChessDataset] Starting to load {len(self.chunk_files)} chunk files...")
         for idx, chunk_file in enumerate(self.chunk_files):
-            print(f"[ChessDataset] Loading chunk {idx+1}/{len(self.chunk_files)}: {chunk_file}")
             try:
                 if chunk_file.endswith('.gz'):
-                    print(f"[ChessDataset]   Opening gzip file...")
                     with gzip.open(chunk_file, 'rb') as f:
                         chunk_data = f.read()
-                    print(f"[ChessDataset]   Read {len(chunk_data)} bytes")
                 else:
-                    print(f"[ChessDataset]   Opening regular file...")
                     with open(chunk_file, 'rb') as f:
                         chunk_data = f.read()
-                    print(f"[ChessDataset]   Read {len(chunk_data)} bytes")
 
-                print(f"[ChessDataset]   Sampling records...")
                 sampled = self._sample_records(chunk_data)
-                print(f"[ChessDataset]   Sampled {len(sampled)} records")
                 records.extend(sampled)
-                print(f"[ChessDataset]   Total records so far: {len(records)}")
 
             except Exception as e:
                 print(f"[ChessDataset] Error loading {chunk_file}: {e}")
-
-        print(f"[ChessDataset] Shuffling {len(records)} records...")
         random.shuffle(records)
-        print(f"[ChessDataset] Finished loading all records!")
         return records
 
     def _sample_records(self, chunkdata: bytes) -> List[bytes]:
@@ -103,9 +90,6 @@ class ChessDataset(Dataset):
         records = []
 
         for i in range(0, len(chunkdata), record_size):
-            if self.sample_rate > 1:
-                if random.randint(0, self.sample_rate - 1) != 0:
-                    continue
 
             record = chunkdata[i:i + record_size]
 

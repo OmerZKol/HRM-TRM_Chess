@@ -35,7 +35,7 @@ cd lczero-training
 python pytorch_train.py --config config/cnn/simple_chess_nn.yaml --data-path data/training-run1--20250209-1017
 
 # Train Transformer model
-python pytorch_train.py --config config/transformer/transformer_chess_nn.yaml --data-path data/training-run1--20250209-1017
+python pytorch_train.py --config config/transformer/transformer_attn_p_head.yaml --data-path data/training-run1--20250209-1017
 
 # Train HRM model (single-step, halt_max_steps=1)
 python pytorch_train.py --config config/hrm/hrm_halt1.yaml --data-path data/training-run1--20250209-1017
@@ -45,6 +45,10 @@ python pytorch_train.py --config config/hrm/hrm_halt4.yaml --data-path data/trai
 
 # Train TRM model (single-step, halt_max_steps=1)
 python pytorch_train.py --config config/trm/trm_halt1.yaml --data-path data/training-run1--20250209-1017
+
+# Alternatively, use batch_train to run multiple configs sequentially
+# Train all configs in the config/ directory
+python batch_train.py --config-dir config/ --data-path data/training-run1--20250209-1017
 
 # View training logs with TensorBoard
 tensorboard --logdir runs/

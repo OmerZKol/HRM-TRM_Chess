@@ -19,60 +19,93 @@ class ChessBoardEmbedding(nn.Module):
     """
     Converts chess board representation to transformer input embeddings.
     Handles the 112-channel board representation from LCZero format.
+    Supports both additive and concatenative (arc_encoding) positional encoding styles.
     """
-    
-    def __init__(self, input_channels=112, hidden_size=256, max_seq_len=64):
+
+    def __init__(self, input_channels=112, hidden_size=256, max_seq_len=64,
+                 arc_encoding=False, pos_enc_dim=16):
         super().__init__()
         self.input_channels = input_channels
         self.hidden_size = hidden_size
         self.max_seq_len = max_seq_len
-        
-        # Convert spatial board to sequence of square embeddings
-        self.square_projection = CastedLinear(input_channels, hidden_size, bias=True)
-        
-        # Positional embeddings for each square (0-63)
-        self.position_embedding = CastedEmbedding(
-            num_embeddings=64,
-            embedding_dim=hidden_size,
-            init_std=0.02,
-            cast_to=torch.float32  # Will be converted to model dtype later
-        )
-        
-        # Layer normalization
-        self.norm = nn.LayerNorm(hidden_size)
-        
+        self.arc_encoding = arc_encoding
+        self.pos_enc_dim = pos_enc_dim
+
+        if arc_encoding:
+            # TensorFlow/TRM style: concatenate positional encoding with features
+            self.pos_enc = nn.Parameter(
+                torch.randn(64, pos_enc_dim) * 0.02
+            )
+            # Project concatenated features: [input_channels + pos_enc_dim] -> hidden_size
+            self.square_projection = CastedLinear(
+                input_channels + pos_enc_dim, hidden_size, bias=True
+            )
+            # Gating mechanism (multiplicative + additive)
+            from model.trm_model.recursive_reasoning.trm import ma_gating
+            self.input_gate = ma_gating(hidden_size)
+        else:
+            # Original transformer style: additive positional embeddings
+            # Convert spatial board to sequence of square embeddings
+            self.square_projection = CastedLinear(input_channels, hidden_size, bias=True)
+
+            # Positional embeddings for each square (0-63)
+            self.position_embedding = CastedEmbedding(
+                num_embeddings=64,
+                embedding_dim=hidden_size,
+                init_std=0.02,
+                cast_to=torch.float32  # Will be converted to model dtype later
+            )
+
+            # Layer normalization
+            self.norm = nn.LayerNorm(hidden_size)
+
     def forward(self, board_tensor):
         """
         Convert board tensor to sequence embeddings.
-        
+
         Args:
             board_tensor: [batch_size, 112, 8, 8] - LCZero board representation
-            
+
         Returns:
             embeddings: [batch_size, 64, hidden_size] - sequence of square embeddings
             positions: [64] - position indices for RoPE
         """
         batch_size = board_tensor.shape[0]
-        
+
         # Flatten spatial dimensions: [batch, 112, 64]
         board_flat = board_tensor.view(batch_size, self.input_channels, 64)
-        
+
         # Transpose to get features per square: [batch, 64, 112]
         square_features = board_flat.transpose(1, 2)
-        
-        # Project to hidden size: [batch, 64, hidden_size]
-        square_embeddings = self.square_projection(square_features)
-        
-        # Add positional embeddings
+
+        if self.arc_encoding:
+            # TRM style: concatenate positional encoding with features
+            positional_encoding = self.pos_enc.unsqueeze(0).expand(batch_size, -1, -1)  # [batch, 64, pos_enc_dim]
+
+            # Concatenate: [batch, 64, 112] + [batch, 64, 16] -> [batch, 64, 128]
+            concatenated_input = torch.cat([square_features, positional_encoding], dim=2)
+
+            # Project to hidden size: [batch, 64, hidden_size]
+            embeddings = self.square_projection(concatenated_input)
+
+            # Apply gating
+            embeddings = self.input_gate(embeddings)
+        else:
+            # Original transformer style: additive positional embeddings
+            # Project to hidden size: [batch, 64, hidden_size]
+            square_embeddings = self.square_projection(square_features)
+
+            # Add positional embeddings
+            positions = torch.arange(64, device=board_tensor.device)
+            pos_embeddings = self.position_embedding(positions)  # [64, hidden_size]
+
+            # Add positional embeddings (broadcasting)
+            embeddings = square_embeddings + pos_embeddings.unsqueeze(0)
+
+            # Apply layer normalization
+            embeddings = self.norm(embeddings)
+
         positions = torch.arange(64, device=board_tensor.device)
-        pos_embeddings = self.position_embedding(positions)  # [64, hidden_size]
-        
-        # Add positional embeddings (broadcasting)
-        embeddings = square_embeddings + pos_embeddings.unsqueeze(0)
-        
-        # Apply layer normalization
-        embeddings = self.norm(embeddings)
-        
         return embeddings, positions
 
 
@@ -219,6 +252,10 @@ class TransformerChessNet(nn.Module):
         use_wdl = transformer_config.get('use_wdl', True)
         rms_norm_eps = transformer_config.get('rms_norm_eps', 1e-5)
 
+        # Input embedding configuration (TRM-style arc_encoding)
+        arc_encoding = transformer_config.get('arc_encoding', False)
+        pos_enc_dim = transformer_config.get('pos_enc_dim', 16)
+
         # Policy head configuration
         use_attention_policy = transformer_config.get('use_attention_policy', True)
         value_embedding_size = transformer_config.get('value_embedding_size', 32)
@@ -229,12 +266,14 @@ class TransformerChessNet(nn.Module):
         self.num_heads = num_heads
         self.policy_size = policy_size
         self.use_attention_policy = use_attention_policy
-        
+
         # Board embedding
         self.board_embedding = ChessBoardEmbedding(
             input_channels=input_channels,
             hidden_size=hidden_size,
-            max_seq_len=max_position_embeddings
+            max_seq_len=max_position_embeddings,
+            arc_encoding=arc_encoding,
+            pos_enc_dim=pos_enc_dim
         )
         
         # Rotary position embeddings

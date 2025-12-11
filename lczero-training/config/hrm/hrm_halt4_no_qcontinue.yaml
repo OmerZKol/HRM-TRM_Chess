@@ -34,8 +34,8 @@ hrm_config:
   # Reasoning cycles
   H_cycles: 2
   L_cycles: 2
-  H_layers: 3
-  L_layers: 3
+  H_layers: 2
+  L_layers: 2
 
   # Model dimensions
   hidden_size: 512

@@ -36,7 +36,7 @@ trm_config:
   H_cycles: 2  # High-level reasoning cycles
   L_cycles: 2  # Low-level reasoning cycles per H-cycle
   H_layers: 1  # Ignored in TRM (uses L_level for both H and L)
-  L_layers: 6  # Number of transformer layers in L-level
+  L_layers: 3  # Number of transformer layers in L-level
 
   # Model dimensions
   hidden_size: 512
