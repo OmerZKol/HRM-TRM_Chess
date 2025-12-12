@@ -11,6 +11,7 @@ import os
 from simple_chess_nn import ChessLoss, SimpleChessNet
 from model.ChessNNet import ChessNNet
 from model.ChessTRMNet import ChessTRMNet
+from model.ChessTRMBaselineNet import ChessTRMBaselineNet
 from transformer_chess_nn import TransformerChessNet
 from torch.utils.tensorboard import SummaryWriter
 from chess_dataset import ChessDataset
@@ -42,8 +43,8 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: ChessLoss,
             if torch.isnan(ml_target).any():
                 print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in ml_target")
 
-            # for HRM/TRM model, compute output with mixed precision for FlashAttention compatibility
-            if(criterion.model_type == "hrm" or criterion.model_type == "trm"):
+            # for HRM/TRM/TRM_baseline model, compute output with mixed precision for FlashAttention compatibility
+            if(criterion.model_type == "hrm" or criterion.model_type == "trm" or criterion.model_type == "trm_baseline"):
                 with torch.autocast(device_type=device.type, dtype=torch.float16):
                     model_output = model(planes)
             else:
@@ -159,8 +160,8 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
                 # Scale loss for gradient accumulation
                 total_loss = total_loss / gradient_accumulation_steps
         else:
-            # compute output with mixed precision for FlashAttention compatibility (HRM/TRM only)
-            if(criterion.model_type == "hrm" or criterion.model_type == "trm"):
+            # compute output with mixed precision for FlashAttention compatibility (HRM/TRM/TRM_baseline only)
+            if(criterion.model_type == "hrm" or criterion.model_type == "trm" or criterion.model_type == "trm_baseline"):
                 with torch.autocast(device_type=device.type, dtype=torch.float16):
                     model_output = model(planes)
                     policy_output, value_output, moves_left_output, q_output = model_output
@@ -331,6 +332,13 @@ def load_model(args, config, device):
                     print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
                 else:
                     model.load_state_dict(checkpoint)
+            elif config.get("model_type") == 'trm_baseline':
+                model = ChessTRMBaselineNet(config, (8,8))
+                if 'model_state_dict' in checkpoint:
+                    model.load_state_dict(checkpoint['model_state_dict'])
+                    print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
+                else:
+                    model.load_state_dict(checkpoint)
             elif config.get("model_type") == 'transformer':
                 model = TransformerChessNet(config, (8,8))
                 if 'model_state_dict' in checkpoint:
@@ -347,6 +355,8 @@ def load_model(args, config, device):
         return ChessNNet(config, (8,8)).to(device)
     if(config.get("model_type") == "trm"):
         return ChessTRMNet(config, (8,8)).to(device)
+    if(config.get("model_type") == "trm_baseline"):
+        return ChessTRMBaselineNet(config, (8,8)).to(device)
     if(config.get("model_type") == "transformer"):
         return TransformerChessNet(config, (8,8)).to(device)
 
@@ -423,7 +433,7 @@ def main():
     # random.seed()  # Reset seed for other random operations
 
 
-    # chunk_files = chunk_files[:20]
+    chunk_files = chunk_files[:20]
 
     train_split = int(0.9 * len(chunk_files)) # 90% for training, 10% for validation
 

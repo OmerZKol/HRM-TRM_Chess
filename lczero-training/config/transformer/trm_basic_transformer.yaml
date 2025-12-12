@@ -1,0 +1,86 @@
+# Configuration for Transformer Baseline (Architecture Ablation)
+# Model: Single-level transformer without hierarchical H/L split or inner cycles
+# This is an ablation of the full HRM - uses H_layers for single-pass processing
+
+# Training parameters
+batch_size: 256
+learning_rate: 0.0001
+epochs: 70
+
+name: "trm_basic_transformer"
+
+# Data sampling
+sample_rate: 1  # Use all data (set to higher value for faster training with less data)
+
+# Training optimizations
+num_workers: 4  # Number of parallel data loading workers (0 = single-threaded)
+use_amp: false  # Don't use AMP - model uses bfloat16 internally (gradient scaler doesn't support bfloat16)
+gradient_accumulation_steps: 1  # Accumulate gradients over N steps (effective_batch = batch_size * N)
+
+# Loss weights
+policy_loss_weight: 1.0
+value_loss_weight: 1.0
+moves_left_loss_weight: 0.01
+
+# Model architecture
+model_type: trm_baseline
+board_x: 8
+board_y: 8
+action_size: 1858
+
+# TRM Baseline specific parameters
+trm_config:
+  seq_len: 64  # Input sequence length (64 chess squares)
+
+  # Baseline: inner cycles are IGNORED (kept for config compatibility)
+  H_cycles: 1  # Ignored in baseline
+  L_cycles: 1  # Ignored in baseline
+  H_layers: 3  # Number of transformer layers (USED in baseline)
+  L_layers: 0  # Ignored in baseline
+
+  # Model dimensions
+  hidden_size: 512
+  expansion: 2.0
+  num_heads: 8
+
+  # Positional encodings
+  pos_encodings: rope
+  rope_theta: 10000.0
+
+  # Halting configuration - SINGLE STEP (no ACT)
+  halt_max_steps: 1
+  halt_exploration_prob: 0.0
+  no_ACT_continue: true  # Use sigmoid of halt logit only
+
+  # ACT control flags (baseline additions)
+  act_enabled: false  # If false, always run halt_max_steps during training
+  act_inference: false  # If true, use adaptive computation during inference
+
+  # Chess-specific configuration (always enabled)
+  square_feature_dim: 112
+  board_x: 8
+  board_y: 8
+
+  # Output heads
+  use_move_prediction: true
+  use_value_prediction: true
+  use_moves_left_prediction: true
+  move_prediction_from_token: 0
+  value_prediction_from_token: 0
+  moves_left_from_token: 0
+
+  # Positional encoding style
+  arc_encoding: true  # tfprocess.py style (concat pos_enc with features)
+  pos_enc_dim: 16
+
+  # Head architecture
+  use_attention_policy: true  # Attention-based policy head
+  use_tensorflow_style_heads: true  # TF-style value/moves heads
+  value_embedding_size: 32
+  moves_embedding_size: 8
+
+  # Baseline options
+  mlp_t: false  # Use attention instead of MLP on sequence dimension
+
+  # Data type
+  forward_dtype: bfloat16
