@@ -446,7 +446,8 @@ def main():
     print(f"[Main] Validation dataset created successfully!")
 
     # Optimize data loading with multiple workers and pinned memory
-    num_workers = config.get('num_workers', 4)  # Use 4 workers by default for parallel data loading
+    # num_workers = config.get('num_workers', 16)  # Use 16 workers by default for parallel data loading
+    num_workers = 16
     print(f"[Main] Creating DataLoaders with {num_workers} workers...")
     train_dataloader = DataLoader(train_dataset, batch_size=config.get('batch_size', 64),
                             shuffle=True, num_workers=num_workers, pin_memory=True,

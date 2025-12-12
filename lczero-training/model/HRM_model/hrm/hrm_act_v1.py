@@ -64,7 +64,6 @@ class HierarchicalReasoningModel_ACTV1Config(BaseModel):
     moves_left_from_token: int = 0  # Which token position to use for moves left prediction
     
     # Chess tokenization config (NEW)
-    use_chess_tokenization: bool = True
     square_feature_dim: int = 112  # Features per square (historical + game state)
     
     # Board dimensions for 2D positional encoding
@@ -224,34 +223,33 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
                         self.moves_left_head.bias.zero_()
 
         # Chess square tokenization
-        if self.config.use_chess_tokenization:
-            if self.config.arc_encoding:
-                # Same as in tfprocess.py
-                self.pos_enc = nn.Parameter(torch.randn(self.config.board_x * self.config.board_y, self.config.pos_enc_dim, dtype=self.forward_dtype) * 0.02)
-                self.square_projection = CastedLinear(self.config.square_feature_dim + self.config.pos_enc_dim, self.config.hidden_size, bias=True)
-                self.input_gate = ma_gating(self.config.hidden_size)
-            else:
-                # Original implementation
-                # Linear projection from square features to hidden dimension
-                self.square_projection = CastedLinear(self.config.square_feature_dim, self.config.hidden_size, bias=True)
-                
-                # Per-square positional encodings (learned offset and scale vectors)
-                self.square_pos_offsets = nn.Parameter(torch.zeros(self.config.seq_len, self.config.hidden_size, dtype=self.forward_dtype))
-                self.square_pos_scales = nn.Parameter(torch.ones(self.config.seq_len, self.config.hidden_size, dtype=self.forward_dtype))
+        if self.config.arc_encoding:
+            # Same as in tfprocess.py
+            self.pos_enc = nn.Parameter(torch.randn(self.config.board_x * self.config.board_y, self.config.pos_enc_dim, dtype=self.forward_dtype) * 0.02)
+            self.square_projection = CastedLinear(self.config.square_feature_dim + self.config.pos_enc_dim, self.config.hidden_size, bias=True)
+            self.input_gate = ma_gating(self.config.hidden_size)
+        else:
+            # Original implementation
+            # Linear projection from square features to hidden dimension
+            self.square_projection = CastedLinear(self.config.square_feature_dim, self.config.hidden_size, bias=True)
             
-            # Initialize square projection with proper scaling
-            with torch.no_grad():
-                # Xavier/Glorot initialization for the projection
-                in_dim = self.square_projection.weight.shape[1]
-                std = (2.0 / (in_dim + self.config.hidden_size)) ** 0.5
-                self.square_projection.weight.normal_(0, std)
-                if self.square_projection.bias is not None:
-                    self.square_projection.bias.zero_()
-                
-                if not self.config.arc_encoding:
-                    # Small random initialization for positional encodings
-                    self.square_pos_offsets.normal_(0, 0.02)
-                    self.square_pos_scales.normal_(1.0, 0.02)
+            # Per-square positional encodings (learned offset and scale vectors)
+            self.square_pos_offsets = nn.Parameter(torch.zeros(self.config.seq_len, self.config.hidden_size, dtype=self.forward_dtype))
+            self.square_pos_scales = nn.Parameter(torch.ones(self.config.seq_len, self.config.hidden_size, dtype=self.forward_dtype))
+        
+        # Initialize square projection with proper scaling
+        with torch.no_grad():
+            # Xavier/Glorot initialization for the projection
+            in_dim = self.square_projection.weight.shape[1]
+            std = (2.0 / (in_dim + self.config.hidden_size)) ** 0.5
+            self.square_projection.weight.normal_(0, std)
+            if self.square_projection.bias is not None:
+                self.square_projection.bias.zero_()
+            
+            if not self.config.arc_encoding:
+                # Small random initialization for positional encodings
+                self.square_pos_offsets.normal_(0, 0.02)
+                self.square_pos_scales.normal_(1.0, 0.02)
 
         if self.config.pos_encodings == "rope":
             self.rotary_emb = RotaryEmbedding(dim=self.config.hidden_size // self.config.num_heads,

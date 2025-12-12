@@ -51,7 +51,6 @@ hrm_config:
   halt_exploration_prob: 0.1
 
   # Chess-specific configuration
-  use_chess_tokenization: true
   square_feature_dim: 112
 
   # Output heads

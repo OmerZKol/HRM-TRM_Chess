@@ -55,7 +55,6 @@ hrm_config:
   no_ACT_continue: true
 
   # Chess-specific configuration
-  use_chess_tokenization: true
   square_feature_dim: 112
 
   # Output heads
