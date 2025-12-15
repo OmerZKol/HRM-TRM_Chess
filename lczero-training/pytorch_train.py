@@ -13,7 +13,7 @@ from model.SimpleChessNet import SimpleChessNet
 from model.ChessNNet import ChessNNet
 from model.ChessTRMNet import ChessTRMNet
 from model.ChessTRMBaselineNet import ChessTRMBaselineNet
-from transformer_chess_nn import TransformerChessNet
+from model.transformer_chess_nn import TransformerChessNet
 from torch.utils.tensorboard import SummaryWriter
 from chess_dataset import ChessDataset
 

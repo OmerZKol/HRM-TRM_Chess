@@ -102,8 +102,3 @@ class AlphaZeroBridge(nn.Module):
         super().eval()
         self.model.eval()
         return self
-
-
-# Legacy aliases for backward compatibility
-HRMAlphaZeroBridge = AlphaZeroBridge
-HRMAlphaZeroBridge2 = AlphaZeroBridge
