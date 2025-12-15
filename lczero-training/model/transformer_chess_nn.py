@@ -6,13 +6,12 @@ Uses implementations from the HRM_Chess/lczero-training/model directory to avoid
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple, Optional
 
-from model.HRM_model.layers import (
+from model.common.layers import (
     Attention, SwiGLU, RotaryEmbedding, CastedLinear, CastedEmbedding, rms_norm
 )
-from model.attention_policy_map import AttentionPolicyHead
-from model.tensorflow_style_heads import CombinedTensorFlowStyleHeads
+from model.heads.attention_policy import AttentionPolicyHead
+from model.heads.value_heads import CombinedTensorFlowStyleHeads
 
 
 class ChessBoardEmbedding(nn.Module):

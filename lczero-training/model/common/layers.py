@@ -9,8 +9,7 @@ except ImportError:
     # Fallback to FlashAttention 2
     from flash_attn import flash_attn_func  # type: ignore[import]
 
-from model.HRM_model.common import trunc_normal_init_
-
+from model.common.initialization import trunc_normal_init_
 
 CosSin = Tuple[torch.Tensor, torch.Tensor]
 
@@ -130,9 +129,23 @@ class Attention(nn.Module):
         if isinstance(attn_output, tuple):  # fa2 and fa3 compatibility
             attn_output = attn_output[0]
 
-        # attn_output: [batch_size, num_heads, seq_len, head_dim]
+        # attn_output: [batch_size, seq_len, num_heads, head_dim]
         attn_output = attn_output.view(batch_size, seq_len, self.output_size)  # type: ignore
         return self.o_proj(attn_output)
+
+class LinearSwish(nn.Module):
+    def __init__(self, hidden_size: int, reverse=False):
+        super().__init__()
+
+        self.linear = CastedLinear(hidden_size, hidden_size, bias=False)
+        self.reverse = reverse
+
+    def forward(self, x):
+        if self.reverse:
+            return F.silu(self.linear(x))
+        else:
+            return self.linear(F.silu(x))
+
 
 class SwiGLU(nn.Module):
     def __init__(self, hidden_size: int, expansion: float):
@@ -145,7 +158,6 @@ class SwiGLU(nn.Module):
     def forward(self, x):
         gate, up = self.gate_up_proj(x).chunk(2, dim=-1)
         return self.down_proj(F.silu(gate) * up)
-
 
 def rms_norm(hidden_states: torch.Tensor, variance_epsilon: float) -> torch.Tensor:
     input_dtype = hidden_states.dtype

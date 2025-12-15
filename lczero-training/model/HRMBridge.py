@@ -17,21 +17,17 @@ class HRMAlphaZeroBridge(nn.Module):
     Converts (board, pi, v) format to HRM's expected batch format.
     """
     
-    def __init__(self, hrm_model, action_size, board_size):
+    def __init__(self, hrm_model):
         super().__init__()
         self.hrm_model = hrm_model
-        self.action_size = action_size
-        self.board_size = board_size
         # New chess format: (112, 8, 8)
-        self.board_x = self.board_y = 8  # Chess is always 8x8
 
     def forward(self, boards):
         """
         Forward pass that converts AlphaZero board format to HRM format.
         
         Args:
-            boards: For chess: [batch_size, 64, 112] - square encodings
-                   For othello: [batch_size, board_x, board_y] - old format
+            boards: For chess: [batch_size, 112, 8, 8] - square encodings
             
         Returns:
             pi: [batch_size, action_size] - Policy logits (NOT log probabilities)
@@ -42,9 +38,6 @@ class HRMAlphaZeroBridge(nn.Module):
         # HRM with chess tokenization expects this format directly
         batch = {
             'inputs': boards,  # Use square encodings directly
-            'puzzle_identifiers': torch.zeros(batch_size, dtype=torch.long, device=boards.device),
-            'move_targets': torch.full((batch_size,), -100, dtype=torch.long, device=boards.device),
-            'value_targets': torch.full((batch_size,), float('nan'), dtype=torch.float, device=boards.device),
         }
         # Initialize carry state
         carry = self.hrm_model.initial_carry(batch)

@@ -14,21 +14,21 @@ with the same positional encodings and chess heads as the full HRM.
 
 from typing import Tuple, List, Dict, Optional
 from dataclasses import dataclass
-import math
+
 import torch
 import copy
 import torch.nn.functional as F
 from torch import nn
 from pydantic import BaseModel
 import random
-from model.trm_model.common import trunc_normal_init_
-from model.trm_model.layers import rms_norm, LinearSwish, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedEmbedding, CastedLinear
-from model.trm_model.sparse_embedding import CastedSparseEmbedding
+from model.common.initialization import trunc_normal_init_
+from model.common.layers import rms_norm, LinearSwish, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedEmbedding, CastedLinear
+from model.common.sparse_embedding import CastedSparseEmbedding
 
 # Chess-specific imports (optional, only used when chess features enabled)
 try:
-    from model.attention_policy_map import AttentionPolicyHead
-    from model.tensorflow_style_heads import TensorFlowStyleValueHead, TensorFlowStyleMovesLeftHead
+    from model.heads.attention_policy import AttentionPolicyHead
+    from model.heads.value_heads import TensorFlowStyleValueHead, TensorFlowStyleMovesLeftHead
 except ImportError:
     AttentionPolicyHead = None
     TensorFlowStyleValueHead = None
@@ -330,7 +330,7 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
                     if self.moves_left_head.bias is not None:
                         self.moves_left_head.bias.zero_()
 
-    def _input_embeddings(self, input: torch.Tensor, puzzle_identifiers: torch.Tensor):
+    def _input_embeddings(self, input: torch.Tensor):
         """
         Convert chess board input to embeddings.
         Input format: [batch, features, height, width] -> [batch, 64, hidden_size]
@@ -388,7 +388,7 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         )
 
         # Input encoding
-        input_embeddings = self._input_embeddings(batch["inputs"], batch["puzzle_identifiers"])
+        input_embeddings = self._input_embeddings(batch["inputs"])
 
         # Baseline: Single forward pass through H_level (no inner cycles)
         z_H = self.H_level(carry.z_H, input_embeddings, **seq_info)

@@ -7,11 +7,11 @@ import torch.nn.functional as F
 from torch import nn
 from pydantic import BaseModel
 
-from model.HRM_model.common import trunc_normal_init_
-from model.HRM_model.layers import rms_norm, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedEmbedding, CastedLinear
-from model.HRM_model.sparse_embedding import CastedSparseEmbedding
-from model.attention_policy_map import AttentionPolicyHead
-from model.tensorflow_style_heads import TensorFlowStyleValueHead, TensorFlowStyleMovesLeftHead
+from model.common.initialization import trunc_normal_init_
+from model.common.layers import rms_norm, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedEmbedding, CastedLinear
+from model.common.sparse_embedding import CastedSparseEmbedding
+from model.heads.attention_policy import AttentionPolicyHead
+from model.heads.value_heads import TensorFlowStyleValueHead, TensorFlowStyleMovesLeftHead
 
 
 @dataclass
@@ -277,7 +277,7 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
             self.q_head.weight.zero_()
             self.q_head.bias.fill_(-5)  # type: ignore
 
-    def _input_embeddings(self, input: torch.Tensor, puzzle_identifiers: torch.Tensor):
+    def _input_embeddings(self, input: torch.Tensor):
         original_shape = input.shape
         input = input.permute(0, 2, 3, 1)
         input = input.reshape(-1, 64, original_shape[1])  # [batch, seq_len, features]
@@ -347,7 +347,7 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
             cos_sin=self.rotary_emb() if hasattr(self, "rotary_emb") else None,
         )
         # Input encoding
-        input_embeddings = self._input_embeddings(batch["inputs"], batch["puzzle_identifiers"])
+        input_embeddings = self._input_embeddings(batch["inputs"])
         # Forward iterations
         with torch.no_grad():
             z_H, z_L = carry.z_H, carry.z_L

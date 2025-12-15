@@ -1,39 +1,47 @@
-import sys
-sys.path.append('..')
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+"""
+Tiny Recursive Model (TRM) wrapper for chess training.
 
-import argparse
+This wrapper provides backward compatibility for training scripts.
+It applies torch.tanh() to the value output as expected by the training code.
+"""
+
 import torch
 import torch.nn as nn
 
-# Add TinyRecursiveModels to path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'TinyRecursiveModels')))
-
-from model.trm_model.recursive_reasoning.trm import TinyRecursiveReasoningModel_ACTV1
-from model.HRMBridge import HRMAlphaZeroBridge
+from model.trm.trm_model import TinyRecursiveModel_ACTV1
+from model.bridge import AlphaZeroBridge
 
 
 class ChessTRMNet(nn.Module):
     """
-    TRM (Tiny Recursive Model) wrapper for chess training.
-    Uses the adapted TinyRecursiveReasoningModel_ACTV1 with chess tokenization.
+    TRM wrapper for chess training with AlphaZero-style outputs.
+
+    Note: The torch.tanh() applied to value outputs is intentional for compatibility
+    with the training pipeline.
     """
-    def __init__(self, config, board_size):
+
+    def __init__(self, config):
         super(ChessTRMNet, self).__init__()
-        # Game params
-        self.board_size = board_size
-        self.board_x, self.board_y = board_size
-        self.action_size = config.get('action_size')
         trm_config = config.get('trm_config')
 
         # Initialize TRM model with bridge
-        trm_model = TinyRecursiveReasoningModel_ACTV1(trm_config)
-        self.bridge = HRMAlphaZeroBridge(trm_model, self.action_size, self.board_size)
+        trm_model = TinyRecursiveModel_ACTV1(trm_config)
+        self.bridge = AlphaZeroBridge(trm_model)
 
     def forward(self, s):
-        # Use the bridge to handle TRM conversion
+        """
+        Forward pass through TRM model.
+
+        Args:
+            s: Board state [batch_size, 112, 8, 8]
+
+        Returns:
+            pi: Policy logits [batch_size, action_size]
+            v: Value predictions with tanh applied [batch_size, 3]
+            moves_left: Moves left predictions [batch_size, 1]
+            q_info: Dictionary with Q-learning information
+        """
         pi, v, moves_left, q_info = self.bridge(s)
 
-        # Return in AlphaZero format: log probabilities and tanh values
+        # Apply tanh to value output for training compatibility
         return pi, torch.tanh(v), moves_left, q_info

@@ -5,8 +5,7 @@ from torch import nn
 import torch.distributed as dist
 from torch.optim.optimizer import Optimizer, ParamsT
 
-from model.HRM_model.common import trunc_normal_init_
-
+from model.common.initialization import trunc_normal_init_
 
 class CastedSparseEmbedding(nn.Module):
     def __init__(self, num_embeddings: int, embedding_dim: int, batch_size: int, init_std: float, cast_to: torch.dtype):
@@ -78,21 +77,21 @@ class CastedSparseEmbeddingSignSGD_Distributed(Optimizer):
                 else:
                     assert False
                 
-            assert local_weights_grad is not None
             assert local_ids is not None
             assert weights is not None
         
             # Apply SignSGD
             # Adam ≈ SignSGD if gradient is very sparse
-            _sparse_emb_signsgd_dist(
-                local_weights_grad,
-                local_ids,
-                weights,
-                
-                lr=group["lr"],
-                weight_decay=group["weight_decay"],
-                world_size=group["world_size"]
-            )
+            if local_weights_grad is not None:
+                _sparse_emb_signsgd_dist(
+                    local_weights_grad,
+                    local_ids,
+                    weights,
+                    
+                    lr=group["lr"],
+                    weight_decay=group["weight_decay"],
+                    world_size=group["world_size"]
+                )
 
 
 def _sparse_emb_signsgd_dist(

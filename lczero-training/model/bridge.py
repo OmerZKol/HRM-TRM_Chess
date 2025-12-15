@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Bridge between AlphaZero training format and HRM model expectations.
-Adapts AlphaZero (board, pi, v) training data to HRM's expected format.
+Bridge between AlphaZero training format and HRM/TRM model expectations.
+Adapts AlphaZero (board, pi, v) training data to model's expected format.
 """
 
 import torch
@@ -11,54 +11,58 @@ from typing import Dict, Tuple
 import numpy as np
 
 
-class HRMAlphaZeroBridge2(nn.Module):
+class AlphaZeroBridge(nn.Module):
     """
-    Wrapper that makes HRM model work with AlphaZero training data.
-    Converts (board, pi, v) format to HRM's expected batch format.
+    Wrapper that makes HRM/TRM models work with AlphaZero training data.
+    Converts (board, pi, v) format to the model's expected batch format.
     """
-    
-    def __init__(self, hrm_model):
+
+    def __init__(self, model):
         super().__init__()
-        self.hrm_model = hrm_model
+        self.model = model
         # New chess format: (112, 8, 8)
 
     def forward(self, boards):
         """
-        wrapper for models
-        
+        Forward pass that converts AlphaZero board format to model format.
+
         Args:
             boards: For chess: [batch_size, 112, 8, 8] - square encodings
-            
+
         Returns:
             pi: [batch_size, action_size] - Policy logits (NOT log probabilities)
-            v: [batch_size, 1] - Value predictions  
+            v: [batch_size, 1] - Value predictions
+            moves_left: [batch_size, 1] - Moves left predictions
+            q_info: Dict containing Q-learning information
         """
         batch_size = boards.shape[0]
         # Chess format: boards is [batch_size, 112, 8, 8]
-        # HRM with chess tokenization expects this format directly
+        # Model with chess tokenization expects this format directly
         batch = {
             'inputs': boards,  # Use square encodings directly
         }
         # Initialize carry state
-        carry = self.hrm_model.initial_carry(batch)
-        
-        # Move to correct device
+        carry = self.model.initial_carry(batch)
+
+        # Move to correct device - handle both HRM (z_H, z_L) and TRM (z_H only)
         if hasattr(carry.inner_carry, 'z_H'):
             carry.inner_carry.z_H = carry.inner_carry.z_H.to(boards.device)
+        if hasattr(carry.inner_carry, 'z_L'):
+            carry.inner_carry.z_L = carry.inner_carry.z_L.to(boards.device)
         if hasattr(carry, 'steps'):
             carry.steps = carry.steps.to(boards.device)
             carry.halted = carry.halted.to(boards.device)
         for key in carry.current_data:
             carry.current_data[key] = carry.current_data[key].to(boards.device)
-        
-        # Forward through HRM with looping until all sequences halt
+
+        # Forward through model with looping until all sequences halt
         # Track which sequences have completed (halted at least once)
         has_completed = torch.zeros(batch_size, dtype=torch.bool, device=boards.device)
 
         # Safety limit: halt_max_steps + 1 for initial halted state + 1 extra for safety
-        max_iterations = self.hrm_model.config.halt_max_steps + 2
+        max_iterations = self.model.config.halt_max_steps + 2
         for iteration in range(max_iterations):
-            carry, outputs = self.hrm_model(carry, batch)
+            carry, outputs = self.model(carry, batch)
             # Mark sequences that have halted (but haven't halted in previous iterations due to reset)
             # A sequence completes when it reaches a halted state
             has_completed = has_completed | carry.halted
@@ -68,7 +72,7 @@ class HRMAlphaZeroBridge2(nn.Module):
                 break
         else:
             # This should never happen - log a warning
-            print(f"Warning: HRM loop reached max iterations ({max_iterations}) without all sequences halting")
+            print(f"Warning: Model loop reached max iterations ({max_iterations}) without all sequences halting")
             print(f"Halted status: {carry.halted}")
             print(f"Has completed: {has_completed}")
             print(f"Steps: {carry.steps if hasattr(carry, 'steps') else 'N/A'}")
@@ -88,13 +92,18 @@ class HRMAlphaZeroBridge2(nn.Module):
         return pi, v, moves_left, q_info
 
     def train(self, mode=True):
-        """Override train to ensure HRM model is also in train mode."""
+        """Override train to ensure model is also in train mode."""
         super().train(mode)
-        self.hrm_model.train(mode)
+        self.model.train(mode)
         return self
 
     def eval(self):
-        """Override eval to ensure HRM model is also in eval mode."""
+        """Override eval to ensure model is also in eval mode."""
         super().eval()
-        self.hrm_model.eval()
+        self.model.eval()
         return self
+
+
+# Legacy aliases for backward compatibility
+HRMAlphaZeroBridge = AlphaZeroBridge
+HRMAlphaZeroBridge2 = AlphaZeroBridge

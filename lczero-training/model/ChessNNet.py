@@ -1,32 +1,46 @@
-import sys
-sys.path.append('..')
-# sys.path.append('../../HRM_model')
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+"""
+Hierarchical Reasoning Model (HRM) wrapper for chess training.
 
-import argparse
+This wrapper provides backward compatibility for training scripts.
+It applies torch.tanh() to the value output as expected by the training code.
+"""
+
 import torch
 import torch.nn as nn
-from model.HRM_model.hrm.hrm_act_v1 import HierarchicalReasoningModel_ACTV1
-sys.path.append('../..')
-from model.HRMBridge import HRMAlphaZeroBridge
+
+from model.hrm.hrm_model import HierarchicalReasoningModel_ACTV1
+from model.bridge import AlphaZeroBridge
+
 
 class ChessNNet(nn.Module):
-    def __init__(self, config, board_size):
+    """
+    HRM wrapper for chess training with AlphaZero-style outputs.
+
+    Note: The torch.tanh() applied to value outputs is intentional for compatibility
+    with the training pipeline.
+    """
+
+    def __init__(self, config):
         super(ChessNNet, self).__init__()
-        # game params
-        self.board_size = board_size
-        self.board_x, self.board_y = board_size
-        self.action_size = config.get('action_size')
         hrm_config = config.get('hrm_config')
         # Initialize HRM model with bridge
         hrm_model = HierarchicalReasoningModel_ACTV1(hrm_config)
-        self.bridge = HRMAlphaZeroBridge(hrm_model, self.action_size, self.board_size)
+        self.bridge = AlphaZeroBridge(hrm_model)
 
     def forward(self, s):
-        # Use the bridge to handle HRM conversion
+        """
+        Forward pass through HRM model.
+
+        Args:
+            s: Board state [batch_size, 112, 8, 8]
+
+        Returns:
+            pi: Policy logits [batch_size, action_size]
+            v: Value predictions with tanh applied [batch_size, 3]
+            moves_left: Moves left predictions [batch_size, 1]
+            q_info: Dictionary with Q-learning information
+        """
         pi, v, moves_left, q_info = self.bridge(s)
 
-        # Return raw logits (loss function will apply log_softmax)
-        # Don't apply log_softmax here - the loss function handles it
+        # Apply tanh to value output for training compatibility
         return pi, torch.tanh(v), moves_left, q_info

@@ -8,7 +8,8 @@ import glob
 import argparse
 import yaml
 import os
-from simple_chess_nn import ChessLoss, SimpleChessNet
+from chess_loss import ChessLoss
+from model.SimpleChessNet import SimpleChessNet
 from model.ChessNNet import ChessNNet
 from model.ChessTRMNet import ChessTRMNet
 from model.ChessTRMBaselineNet import ChessTRMBaselineNet
@@ -319,28 +320,28 @@ def load_model(args, config, device):
                 else:
                     model.load_state_dict(checkpoint)
             elif config.get("model_type") == 'hrm':
-                model = ChessNNet(config, (8,8))
+                model = ChessNNet(config)
                 if 'model_state_dict' in checkpoint:
                     model.load_state_dict(checkpoint['model_state_dict'])
                     print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
                 else:
                     model.load_state_dict(checkpoint)
             elif config.get("model_type") == 'trm':
-                model = ChessTRMNet(config, (8,8))
+                model = ChessTRMNet(config)
                 if 'model_state_dict' in checkpoint:
                     model.load_state_dict(checkpoint['model_state_dict'])
                     print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
                 else:
                     model.load_state_dict(checkpoint)
             elif config.get("model_type") == 'trm_baseline':
-                model = ChessTRMBaselineNet(config, (8,8))
+                model = ChessTRMBaselineNet(config)
                 if 'model_state_dict' in checkpoint:
                     model.load_state_dict(checkpoint['model_state_dict'])
                     print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
                 else:
                     model.load_state_dict(checkpoint)
             elif config.get("model_type") == 'transformer':
-                model = TransformerChessNet(config, (8,8))
+                model = TransformerChessNet(config)
                 if 'model_state_dict' in checkpoint:
                     model.load_state_dict(checkpoint['model_state_dict'])
                     print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
@@ -352,13 +353,13 @@ def load_model(args, config, device):
     if(config.get("model_type") == "simple"):
         return SimpleChessNet().to(device)
     if(config.get("model_type") == "hrm"):
-        return ChessNNet(config, (8,8)).to(device)
+        return ChessNNet(config).to(device)
     if(config.get("model_type") == "trm"):
-        return ChessTRMNet(config, (8,8)).to(device)
+        return ChessTRMNet(config).to(device)
     if(config.get("model_type") == "trm_baseline"):
-        return ChessTRMBaselineNet(config, (8,8)).to(device)
+        return ChessTRMBaselineNet(config).to(device)
     if(config.get("model_type") == "transformer"):
-        return TransformerChessNet(config, (8,8)).to(device)
+        return TransformerChessNet(config).to(device)
 
 def save_model(model, optimizer, scheduler, config, args, epoch, losses):
     """Save model with training info"""
@@ -474,10 +475,13 @@ def main():
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config.get('lr', 0.0001))
     print(f'Optimizer: Adam with lr={config.get("lr", 0.0001)}')
-    # Add learning rate scheduler - cosine annealing with warm restarts
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        optimizer, T_0=10, T_mult=2, eta_min=config.get('lr', 0.0001)/100
+    # Add learning rate scheduler - cosine annealing (smooth decay, no restarts)
+    #use T_max from config or default to 20 (realistic for early stopping)
+    t_max = config.get('scheduler_T_max', 20)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=t_max, eta_min=config.get('lr', 0.0001)/100
     )
+    print(f'Using CosineAnnealingLR: {config.get("lr", 0.0001):.2e} -> {config.get("lr", 0.0001)/100:.2e} over {t_max} epochs')
 
     # Initialize mixed precision scaler for AMP (if enabled and on CUDA)
     # Note: Don't use gradient scaler with bfloat16 (not supported)
