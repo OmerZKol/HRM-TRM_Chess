@@ -2,7 +2,7 @@
 # Model: ChessNNet (HierarchicalReasoningModel_ACTV1) - Single-step reasoning
 
 # Training parameters
-batch_size: 256
+batch_size: 512
 learning_rate: 0.0001
 epochs: 80
 

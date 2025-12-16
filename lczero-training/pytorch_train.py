@@ -434,7 +434,7 @@ def main():
     # random.seed()  # Reset seed for other random operations
 
 
-    # chunk_files = chunk_files[:20]
+    # chunk_files = chunk_files[:10]
 
     train_split = int(0.9 * len(chunk_files)) # 90% for training, 10% for validation
 
@@ -501,7 +501,7 @@ def main():
         print(f'Effective batch size: {config.get("batch_size", 64) * gradient_accumulation_steps}')
 
     # Initialize TensorBoard writer
-    log_dir = f"runs/chess_training_{config.get('name')}"
+    log_dir = f"runs/{config.get('name')}"
     writer = SummaryWriter(log_dir=log_dir)
     print(f'TensorBoard logs will be saved to: {log_dir}')
 

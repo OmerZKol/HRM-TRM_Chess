@@ -12,7 +12,7 @@ from model.common.layers import rms_norm, SwiGLU, Attention, RotaryEmbedding, Co
 from model.common.sparse_embedding import CastedSparseEmbedding
 from model.heads.attention_policy import AttentionPolicyHead
 from model.heads.value_heads import TensorFlowStyleValueHead, TensorFlowStyleMovesLeftHead
-
+from model.common.gating import Gating, ma_gating
 
 @dataclass
 class HierarchicalReasoningModel_ACTV1InnerCarry:
@@ -65,10 +65,6 @@ class HierarchicalReasoningModel_ACTV1Config(BaseModel):
     
     # Chess tokenization config (NEW)
     square_feature_dim: int = 112  # Features per square (historical + game state)
-    
-    # Board dimensions for 2D positional encoding
-    board_x: int = 8
-    board_y: int = 8
 
     # From tfprocess.py
     arc_encoding: bool = True
@@ -83,34 +79,6 @@ class HierarchicalReasoningModel_ACTV1Config(BaseModel):
     moves_embedding_size: int = 8   # Moves left head embedding size
 
     forward_dtype: str = "bfloat16"
-
-
-class Gating(nn.Module):
-    def __init__(self, hidden_size: int, additive: bool = True, init_value: float = 0.0):
-        super().__init__()
-        self.additive = additive
-        self.gate = nn.Parameter(torch.full((hidden_size,), init_value))
-        if not additive:
-            self.gate.data.clamp_(min=0) # Equivalent to NonNeg constraint
-
-    def forward(self, x):
-        if self.additive:
-            return x + self.gate
-        else:
-            # Equivalent to NonNeg constraint during training
-            if self.training:
-                # Use non-inplace operation to avoid breaking gradients
-                gate = torch.clamp(self.gate, min=0)
-            else:
-                gate = self.gate
-            return x * gate
-
-def ma_gating(hidden_size: int):
-    return nn.Sequential(
-        Gating(hidden_size, additive=False, init_value=1.0),
-        Gating(hidden_size, additive=True, init_value=0.0)
-    )
-
 
 class HierarchicalReasoningModel_ACTV1Block(nn.Module):
     def __init__(self, config: HierarchicalReasoningModel_ACTV1Config, layer_idx: int = 0, total_layers: int = 1) -> None:
@@ -225,9 +193,10 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         # Chess square tokenization
         if self.config.arc_encoding:
             # Same as in tfprocess.py
-            self.pos_enc = nn.Parameter(torch.randn(self.config.board_x * self.config.board_y, self.config.pos_enc_dim, dtype=self.forward_dtype) * 0.02)
+            self.pos_enc = nn.Parameter(torch.randn(64, self.config.pos_enc_dim, dtype=self.forward_dtype) * 0.02)
             self.square_projection = CastedLinear(self.config.square_feature_dim + self.config.pos_enc_dim, self.config.hidden_size, bias=True)
-            self.input_gate = ma_gating(self.config.hidden_size)
+            self.embedding_activation = nn.ReLU()
+            self.input_gate = ma_gating(64, self.config.hidden_size)
         else:
             # Original implementation
             # Linear projection from square features to hidden dimension
@@ -301,6 +270,8 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
             input_flat = concatenated_input.view(batch_size * num_squares, -1)
             projected = self.square_projection(input_flat) # [batch*64, hidden_size]
             embedding = projected.view(batch_size, num_squares, self.config.hidden_size)
+
+            embedding = self.embedding_activation(embedding)
 
             # Step 3: Gating (gating includes activation internally)
             embedding = self.input_gate(embedding)

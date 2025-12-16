@@ -40,8 +40,9 @@ class ChessBoardEmbedding(nn.Module):
                 input_channels + pos_enc_dim, hidden_size, bias=True
             )
             # Gating mechanism (multiplicative + additive)
-            from model.trm_model.recursive_reasoning.trm import ma_gating
-            self.input_gate = ma_gating(hidden_size)
+            from model.common.gating import ma_gating
+            self.embedding_activation = nn.ReLU()
+            self.input_gate = ma_gating(64, hidden_size)
         else:
             # Original transformer style: additive positional embeddings
             # Convert spatial board to sequence of square embeddings
@@ -87,6 +88,9 @@ class ChessBoardEmbedding(nn.Module):
             # Project to hidden size: [batch, 64, hidden_size]
             embeddings = self.square_projection(concatenated_input)
 
+            # Apply activation
+            embeddings = self.embedding_activation(embeddings)
+
             # Apply gating
             embeddings = self.input_gate(embeddings)
         else:
@@ -131,7 +135,7 @@ class StandardAttention(nn.Module):
         
         # Apply RoPE if provided
         if cos_sin is not None:
-            from model.HRM_model.models.layers import apply_rotary_pos_emb
+            from model.common.layers import apply_rotary_pos_emb
             cos, sin = cos_sin
             query = query.transpose(1, 2)  # [batch, seq, heads, head_dim]
             key = key.transpose(1, 2)

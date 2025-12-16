@@ -8,7 +8,7 @@ It applies torch.tanh() to the value output as expected by the training code.
 import torch
 import torch.nn as nn
 
-from model.trm.trm_baseline import TinyRecursiveReasoningModel_ACTV1
+from model.trm import TinyRecursiveReasoningModel_ACTV1
 from model.bridge import AlphaZeroBridge
 
 

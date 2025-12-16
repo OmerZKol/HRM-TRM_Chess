@@ -24,6 +24,7 @@ import random
 from model.common.initialization import trunc_normal_init_
 from model.common.layers import rms_norm, LinearSwish, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedEmbedding, CastedLinear
 from model.common.sparse_embedding import CastedSparseEmbedding
+from model.common.gating import Gating, ma_gating
 
 # Chess-specific imports (optional, only used when chess features enabled)
 try:
@@ -87,11 +88,7 @@ class TinyRecursiveReasoningModel_ACTV1Config(BaseModel):
 
     # Chess tokenization config (always enabled)
     square_feature_dim: int = 112  # Features per square (historical + game state)
-
-    # Board dimensions
-    board_x: int = 8
-    board_y: int = 8
-
+    
     # From tfprocess.py
     arc_encoding: bool = True
     pos_enc_dim: int = 16
@@ -113,32 +110,6 @@ class TinyRecursiveReasoningModel_ACTV1Config(BaseModel):
     act_inference: bool = False  # If True, use adaptive computation during inference
 
     forward_dtype: str = "bfloat16"
-
-class Gating(nn.Module):
-    def __init__(self, hidden_size: int, additive: bool = True, init_value: float = 0.0):
-        super().__init__()
-        self.additive = additive
-        self.gate = nn.Parameter(torch.full((hidden_size,), init_value))
-        if not additive:
-            self.gate.data.clamp_(min=0) # Equivalent to NonNeg constraint
-
-    def forward(self, x):
-        if self.additive:
-            return x + self.gate
-        else:
-            # Equivalent to NonNeg constraint during training
-            if self.training:
-                # Use non-inplace operation to avoid breaking gradients
-                gate = torch.clamp(self.gate, min=0)
-            else:
-                gate = self.gate
-            return x * gate
-
-def ma_gating(hidden_size: int):
-    return nn.Sequential(
-        Gating(hidden_size, additive=False, init_value=1.0),
-        Gating(hidden_size, additive=True, init_value=0.0)
-    )
 
 class TinyRecursiveReasoningModel_ACTV1Block(nn.Module):
     def __init__(self, config: TinyRecursiveReasoningModel_ACTV1Config, layer_idx: int = 0, total_layers: int = 1) -> None:
@@ -227,9 +198,10 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         # Chess square tokenization
         if self.config.arc_encoding:
             # positional encoding concatenated with features
-            self.pos_enc = nn.Parameter(torch.randn(self.config.board_x * self.config.board_y, self.config.pos_enc_dim, dtype=self.forward_dtype) * 0.02)
+            self.pos_enc = nn.Parameter(torch.randn(64, self.config.pos_enc_dim, dtype=self.forward_dtype) * 0.02)
             self.square_projection = CastedLinear(self.config.square_feature_dim + self.config.pos_enc_dim, self.config.hidden_size, bias=True)
-            self.input_gate = ma_gating(self.config.hidden_size)
+            self.embedding_activation = nn.ReLU()
+            self.input_gate = ma_gating(64, self.config.hidden_size)
         else:
             # learned per-square offsets and scales
             self.square_projection = CastedLinear(self.config.square_feature_dim, self.config.hidden_size, bias=True)
@@ -355,6 +327,8 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
             projected = self.square_projection(input_flat)
             embedding = projected.view(batch_size, num_squares, self.config.hidden_size)
 
+            embedding = self.embedding_activation(embedding)
+
             # Apply gating (gating includes activation internally)
             embedding = self.input_gate(embedding)
         else:
@@ -444,10 +418,6 @@ class TinyRecursiveReasoningModel_ACTV1(nn.Module):
         super().__init__()
         self.config = TinyRecursiveReasoningModel_ACTV1Config(**config_dict)
         self.inner = TinyRecursiveReasoningModel_ACTV1_Inner(self.config)
-
-    @property
-    def puzzle_emb(self):
-        return self.inner.puzzle_emb
 
     def initial_carry(self, batch: Dict[str, torch.Tensor]):
         batch_size = batch["inputs"].shape[0]

@@ -55,11 +55,9 @@ from model.hrm.hrm_model import (
 )
 
 # TRM models
-from model.trm.trm_model import (
+from model.trm import (
     TinyRecursiveModel_ACTV1,
     TinyRecursiveModel_ACTV1Config,
-)
-from model.trm.trm_baseline import (
     TinyRecursiveReasoningModel_ACTV1,
     TinyRecursiveReasoningModel_ACTV1Config,
 )
