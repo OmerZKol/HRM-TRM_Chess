@@ -154,6 +154,21 @@ Examples:
                 print(f"Error: Config file not found: {config_file}")
                 return 1
 
+    # Skip first 2 configs (already trained)
+    if len(config_files) > 2:
+        print(f"\nSkipping first 2 configs (already trained):")
+        for i, config_file in enumerate(config_files[:2], 1):
+            try:
+                config = load_config(config_file)
+                model_name = config.get('name', 'unnamed')
+                print(f"  {i}. {config_file} → {model_name}")
+            except:
+                print(f"  {i}. {config_file}")
+        config_files = config_files[2:]
+        print(f"Remaining configs to train: {len(config_files)}\n")
+    else:
+        print(f"Warning: Only {len(config_files)} config(s) found, not skipping any.\n")
+
     # Print summary
     print("\n" + "="*80)
     print("BATCH TRAINING SUMMARY")

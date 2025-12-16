@@ -8,6 +8,9 @@ import glob
 import argparse
 import yaml
 import os
+import sys
+import logging
+from datetime import datetime
 from chess_loss import ChessLoss
 from model.SimpleChessNet import SimpleChessNet
 from model.ChessNNet import ChessNNet
@@ -16,6 +19,22 @@ from model.ChessTRMBaselineNet import ChessTRMBaselineNet
 from model.transformer_chess_nn import TransformerChessNet
 from torch.utils.tensorboard import SummaryWriter
 from chess_dataset import ChessDataset
+
+
+class TeeLogger:
+    """Writes to both stdout and a log file"""
+    def __init__(self, log_file):
+        self.terminal = sys.stdout
+        self.log = open(log_file, 'a')
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush()  # Ensure immediate write
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
 
 def evaluate(model: nn.Module, dataloader: DataLoader, criterion: ChessLoss,
             device: torch.device) -> dict:
@@ -400,13 +419,29 @@ def main():
                        help='Path to save trained model (.pth)') 
     
     args = parser.parse_args()
-    
+
     # Load configuration
     config = {}
     if args.config and os.path.exists(args.config):
         with open(args.config, 'r') as f:
             config = yaml.safe_load(f)
-    
+
+    # Setup logging - save all output to file
+    model_name = config.get('name', 'unnamed_model')
+    training_log_dir = f"training_logs/{model_name}"
+    os.makedirs(training_log_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = f"{training_log_dir}/training_{timestamp}.log"
+
+    # Redirect stdout to both terminal and log file
+    sys.stdout = TeeLogger(log_file)
+    sys.stderr = TeeLogger(log_file)  # Also capture errors
+
+    print(f"=" * 80)
+    print(f"Training started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Log file: {log_file}")
+    print(f"=" * 80)
+
     # Set device
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
@@ -448,7 +483,7 @@ def main():
 
     # Optimize data loading with multiple workers and pinned memory
     # num_workers = config.get('num_workers', 16)  # Use 16 workers by default for parallel data loading
-    num_workers = 16
+    num_workers = 12
     print(f"[Main] Creating DataLoaders with {num_workers} workers...")
     train_dataloader = DataLoader(train_dataset, batch_size=config.get('batch_size', 128),
                             shuffle=True, num_workers=num_workers, pin_memory=True,
@@ -476,8 +511,8 @@ def main():
     optimizer = torch.optim.Adam(model.parameters(), lr=config.get('lr', 0.0001))
     print(f'Optimizer: Adam with lr={config.get("lr", 0.0001)}')
     # Add learning rate scheduler - cosine annealing (smooth decay, no restarts)
-    #use T_max from config or default to 26 (realistic for early stopping)
-    t_max = config.get('scheduler_T_max', 26)
+    #use T_max from config or default to 24 (realistic for early stopping)
+    t_max = config.get('scheduler_T_max', 24)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=t_max, eta_min=config.get('lr', 0.0001)/200
     )
@@ -559,16 +594,42 @@ def main():
                         print(f'Best validation loss: {best_val_loss:.6f}')
                         save_model(model, optimizer, scheduler, config, args, epoch, losses)
                         writer.close()
+
+                        print(f"\n" + "=" * 80)
+                        print(f"Training stopped early at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                        print(f"TensorBoard logs: {log_dir}")
+                        print(f"Training log: {log_file}")
+                        print(f"=" * 80)
+
+                        # Restore stdout/stderr and close log file
+                        if isinstance(sys.stdout, TeeLogger):
+                            sys.stdout.log.close()
+                            sys.stdout = sys.stdout.terminal
+                        if isinstance(sys.stderr, TeeLogger):
+                            sys.stderr.log.close()
+                            sys.stderr = sys.stderr.terminal
                         return
 
             # Save model checkpoint
-            save_model(model, optimizer, scheduler, config, args, epoch, losses)
+            if(epoch % 4 == 0):
+                save_model(model, optimizer, scheduler, config, args, epoch, losses)
 
     # Close TensorBoard writer
     writer.close()
-    print(f"Training completed. View logs with: tensorboard --logdir {log_dir}")
-    # print(f"Parameter snapshots saved to: {param_snapshot_dir}")
-    # print(f"To visualize parameter evolution, run: python visualize_parameters.py --snapshot-dir {param_snapshot_dir}")
+
+    print(f"\n" + "=" * 80)
+    print(f"Training completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"TensorBoard logs: {log_dir}")
+    print(f"Training log: {log_file}")
+    print(f"=" * 80)
+
+    # Restore stdout/stderr and close log file
+    if isinstance(sys.stdout, TeeLogger):
+        sys.stdout.log.close()
+        sys.stdout = sys.stdout.terminal
+    if isinstance(sys.stderr, TeeLogger):
+        sys.stderr.log.close()
+        sys.stderr = sys.stderr.terminal
 
 if __name__ == '__main__':
     main()
