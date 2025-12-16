@@ -450,14 +450,14 @@ def main():
     # num_workers = config.get('num_workers', 16)  # Use 16 workers by default for parallel data loading
     num_workers = 16
     print(f"[Main] Creating DataLoaders with {num_workers} workers...")
-    train_dataloader = DataLoader(train_dataset, batch_size=config.get('batch_size', 64),
+    train_dataloader = DataLoader(train_dataset, batch_size=config.get('batch_size', 128),
                             shuffle=True, num_workers=num_workers, pin_memory=True,
-                            persistent_workers=True if num_workers > 0 else False,
-                            prefetch_factor=2 if num_workers > 0 else None)
-    test_dataloader = DataLoader(valid_dataset, batch_size=config.get('batch_size', 64),
+                            persistent_workers=False,
+                            prefetch_factor=4 if num_workers > 0 else None)
+    test_dataloader = DataLoader(valid_dataset, batch_size=config.get('batch_size', 128),
                             shuffle=False, num_workers=num_workers, pin_memory=True,
-                            persistent_workers=True if num_workers > 0 else False,
-                            prefetch_factor=2 if num_workers > 0 else None)
+                            persistent_workers=False,
+                            prefetch_factor=4 if num_workers > 0 else None)
     print(f"[Main] DataLoaders created successfully!")
 
     print(f'Training dataset size: {len(train_dataset)}')
@@ -476,10 +476,10 @@ def main():
     optimizer = torch.optim.Adam(model.parameters(), lr=config.get('lr', 0.0001))
     print(f'Optimizer: Adam with lr={config.get("lr", 0.0001)}')
     # Add learning rate scheduler - cosine annealing (smooth decay, no restarts)
-    #use T_max from config or default to 20 (realistic for early stopping)
-    t_max = config.get('scheduler_T_max', 20)
+    #use T_max from config or default to 26 (realistic for early stopping)
+    t_max = config.get('scheduler_T_max', 26)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=t_max, eta_min=config.get('lr', 0.0001)/100
+        optimizer, T_max=t_max, eta_min=config.get('lr', 0.0001)/200
     )
     print(f'Using CosineAnnealingLR: {config.get("lr", 0.0001):.2e} -> {config.get("lr", 0.0001)/100:.2e} over {t_max} epochs')
 
@@ -533,7 +533,7 @@ def main():
             writer.add_scalar(f'Train/{key}', value, epoch)
         writer.add_scalar('Learning_Rate', current_lr, epoch)
         
-        if(epoch % 2 == 0):
+        if(epoch % 1 == 0):
             eval_losses = evaluate(model, test_dataloader, criterion, device)
             print(f'Validation Losses:')
             for key, value in eval_losses.items():
