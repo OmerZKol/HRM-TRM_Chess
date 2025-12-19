@@ -113,11 +113,12 @@ class HierarchicalReasoningModel_ACTV1Block(nn.Module):
 
 
 class HierarchicalReasoningModel_ACTV1ReasoningModule(nn.Module):
-    def __init__(self, layers: List[HierarchicalReasoningModel_ACTV1Block], norm_eps: float = 1e-5):
+    def __init__(self, layers: List[HierarchicalReasoningModel_ACTV1Block], norm_eps: float = 1e-5, use_final_norm: bool = True):
         super().__init__()
 
         self.layers = torch.nn.ModuleList(layers)
         self.norm_eps = norm_eps
+        self.use_final_norm = use_final_norm
 
     def forward(self, hidden_states: torch.Tensor, input_injection: torch.Tensor, **kwargs) -> torch.Tensor:
         # Input injection (add)
@@ -126,8 +127,9 @@ class HierarchicalReasoningModel_ACTV1ReasoningModule(nn.Module):
         for layer in self.layers:
             hidden_states = layer(hidden_states=hidden_states, **kwargs)
 
-        # Final norm (standard for pre-norm architectures)
-        hidden_states = rms_norm(hidden_states, variance_epsilon=self.norm_eps)
+        # Final norm - enabled by default for HRM (no weight sharing issue like TRM)
+        if self.use_final_norm:
+            hidden_states = rms_norm(hidden_states, variance_epsilon=self.norm_eps)
 
         return hidden_states
 
@@ -137,6 +139,11 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         super().__init__()
         self.config = config
         self.forward_dtype = getattr(torch, self.config.forward_dtype)
+
+        # Embedding scale to match original model magnitude
+        # Chess input is sparse binary (mostly 0/1), so projected embeddings have small magnitude (~0.2-0.3)
+        # This scale brings input embeddings to comparable magnitude with hidden states (~1.0)
+        self.embed_scale = math.sqrt(self.config.hidden_size)
 
         # I/O
         self.q_head = CastedLinear(self.config.hidden_size, 2, bias=True)
@@ -235,10 +242,10 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
             norm_eps=self.config.rms_norm_eps
         )
         
-        # Initial states (reduced std for better convergence with bfloat16)
-        # Using std=0.02 similar to modern transformer initializations
-        self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=0.02), persistent=True)
-        self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=0.02), persistent=True)
+        # Initial states - increased std for better cycle effectiveness
+        # Original models use std=1.0, using 0.1 as a moderate value for bfloat16 stability
+        self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=0.1), persistent=True)
+        self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=0.1), persistent=True)
 
         # Q head special init
         # Init Q to (almost) zero for faster learning during bootstrapping
@@ -295,11 +302,13 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
             # Each square gets its own learned offset and scale
             pos_offsets = self.square_pos_offsets.unsqueeze(0)  # [1, squares, hidden_size]
             pos_scales = self.square_pos_scales.unsqueeze(0)   # [1, squares, hidden_size]
-            
+
             # Apply positional encoding: embedding * scale + offset
             embedding = embedding * pos_scales + pos_offsets
-            
-        return embedding
+
+        # Scale embeddings to match original model magnitude (~1.0)
+        # This is critical for proper gradient flow with cycles
+        return self.embed_scale * embedding
 
     def empty_carry(self, batch_size: int):
         return HierarchicalReasoningModel_ACTV1InnerCarry(

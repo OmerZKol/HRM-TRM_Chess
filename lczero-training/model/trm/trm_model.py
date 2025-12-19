@@ -150,10 +150,11 @@ class TinyRecursiveReasoningModel_ACTV1Block(nn.Module):
         return hidden_states
 
 class TinyRecursiveReasoningModel_ACTV1ReasoningModule(nn.Module):
-    def __init__(self, layers: List[TinyRecursiveReasoningModel_ACTV1Block], norm_eps: float = 1e-5):
+    def __init__(self, layers: List[TinyRecursiveReasoningModel_ACTV1Block], norm_eps: float = 1e-5, use_final_norm: bool = False):
         super().__init__()
         self.layers = torch.nn.ModuleList(layers)
         self.norm_eps = norm_eps
+        self.use_final_norm = use_final_norm
 
     def forward(self, hidden_states: torch.Tensor, input_injection: torch.Tensor, **kwargs) -> torch.Tensor:
         # Input injection (add)
@@ -162,8 +163,13 @@ class TinyRecursiveReasoningModel_ACTV1ReasoningModule(nn.Module):
         for layer_idx, layer in enumerate(self.layers):
             hidden_states = layer(hidden_states=hidden_states, **kwargs)
 
-        # Final norm (standard for pre-norm architectures)
-        hidden_states = rms_norm(hidden_states, variance_epsilon=self.norm_eps)
+        # Final norm - disabled by default for TRM to match original architecture
+        # The original TRM uses post-norm blocks without a final norm in the module.
+        # With pre-norm blocks + final norm + weight sharing (same L_level for z_H and z_L),
+        # the gradients become unstable causing NaN. HRM doesn't have this issue because
+        # it uses separate H_level and L_level modules.
+        if self.use_final_norm:
+            hidden_states = rms_norm(hidden_states, variance_epsilon=self.norm_eps)
 
         return hidden_states
 
@@ -173,6 +179,13 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         super().__init__()
         self.config = config
         self.forward_dtype = getattr(torch, self.config.forward_dtype)
+
+        # Embedding scale to match original TRM magnitude
+        # Original TRM scales token embeddings by sqrt(hidden_size) to achieve ~1.0 magnitude
+        # Chess input is sparse binary (mostly 0/1), so projected embeddings have small magnitude (~0.2-0.3)
+        # This scale brings input embeddings to comparable magnitude with hidden states
+        import math
+        self.embed_scale = math.sqrt(self.config.hidden_size)
 
         # Q head for halting
         self.q_head = CastedLinear(self.config.hidden_size, 2, bias=True)
@@ -219,10 +232,10 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
             norm_eps=self.config.rms_norm_eps
         )
 
-        # Initial states (reduced std for better convergence with bfloat16)
-        # Using std=0.02 similar to modern transformer initializations
-        self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=0.02), persistent=True)
-        self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=0.02), persistent=True)
+        # Initial states - increased std for better cycle effectiveness
+        # Original TRM uses std=1.0, using 0.1 as a moderate value for bfloat16 stability
+        self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=0.1), persistent=True)
+        self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=0.1), persistent=True)
 
         # Q head special init
         # Init Q to (almost) zero for faster learning during bootstrapping
@@ -326,7 +339,9 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
             pos_scales = self.square_pos_scales.unsqueeze(0)   # [1, 64, hidden_size]
             embedding = embedding * pos_scales + pos_offsets
 
-        return embedding
+        # Scale embeddings to match original TRM magnitude (~1.0)
+        # This is critical for proper gradient flow with cycles
+        return self.embed_scale * embedding
 
     def empty_carry(self, batch_size: int):
         # Always 64 squares for chess
@@ -365,6 +380,10 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
             z_H_plus_input = z_H + input_embeddings
             z_L = self.L_level(z_L, z_H_plus_input, **seq_info)
         z_H = self.L_level(z_H, z_L, **seq_info)
+
+        # Final norm before output heads (required for pre-norm architecture)
+        # This replaces the per-module final norm that was causing instability with weight sharing
+        z_H = rms_norm(z_H, variance_epsilon=self.config.rms_norm_eps)
 
         # Outputs
         new_carry = TinyRecursiveReasoningModel_ACTV1InnerCarry(z_H=z_H.detach(), z_L=z_L.detach())  # New carry no grad

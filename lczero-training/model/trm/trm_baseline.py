@@ -168,10 +168,11 @@ class TinyRecursiveReasoningModel_ACTV1Block(nn.Module):
         return hidden_states
 
 class TinyRecursiveReasoningModel_ACTV1ReasoningModule(nn.Module):
-    def __init__(self, layers: List[TinyRecursiveReasoningModel_ACTV1Block], norm_eps: float = 1e-5):
+    def __init__(self, layers: List[TinyRecursiveReasoningModel_ACTV1Block], norm_eps: float = 1e-5, use_final_norm: bool = True):
         super().__init__()
         self.layers = torch.nn.ModuleList(layers)
         self.norm_eps = norm_eps
+        self.use_final_norm = use_final_norm
 
     def forward(self, hidden_states: torch.Tensor, input_injection: torch.Tensor, **kwargs) -> torch.Tensor:
         # Input injection (add)
@@ -180,8 +181,9 @@ class TinyRecursiveReasoningModel_ACTV1ReasoningModule(nn.Module):
         for layer_idx, layer in enumerate(self.layers):
             hidden_states = layer(hidden_states=hidden_states, **kwargs)
 
-        # Final norm (standard for pre-norm architectures)
-        hidden_states = rms_norm(hidden_states, variance_epsilon=self.norm_eps)
+        # Final norm - enabled by default for baseline (no weight sharing issue)
+        if self.use_final_norm:
+            hidden_states = rms_norm(hidden_states, variance_epsilon=self.norm_eps)
 
         return hidden_states
 
@@ -191,6 +193,12 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         super().__init__()
         self.config = config
         self.forward_dtype = getattr(torch, self.config.forward_dtype)
+
+        # Embedding scale to match original model magnitude
+        # Chess input is sparse binary (mostly 0/1), so projected embeddings have small magnitude (~0.2-0.3)
+        # This scale brings input embeddings to comparable magnitude with hidden states (~1.0)
+        import math
+        self.embed_scale = math.sqrt(self.config.hidden_size)
 
         # Q head for halting
         self.q_head = CastedLinear(self.config.hidden_size, 2, bias=True)
@@ -238,8 +246,9 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         )
 
         # Initial state (single level only - no L_init in baseline)
-        # Using std=0.02 similar to modern transformer initializations
-        self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=0.02), persistent=True)
+        # Increased std for better cycle effectiveness
+        # Original models use std=1.0, using 0.1 as a moderate value for bfloat16 stability
+        self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=0.1), persistent=True)
 
         # Q head special init
         # Init Q to (almost) zero for faster learning during bootstrapping
@@ -343,7 +352,9 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
             pos_scales = self.square_pos_scales.unsqueeze(0)   # [1, 64, hidden_size]
             embedding = embedding * pos_scales + pos_offsets
 
-        return embedding
+        # Scale embeddings to match original model magnitude (~1.0)
+        # This is critical for proper gradient flow with ACT loops
+        return self.embed_scale * embedding
 
     def empty_carry(self, batch_size: int):
         # Always 64 squares for chess - single level only in baseline

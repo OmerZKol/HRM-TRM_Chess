@@ -442,10 +442,23 @@ def main():
     print(f"Log file: {log_file}")
     print(f"=" * 80)
 
-    # Set device
-    device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
+    # Set device - require CUDA for training
+    if args.device == 'cuda' and not torch.cuda.is_available():
+        print("\nERROR: CUDA requested but not available!")
+        print("Training requires a GPU. Please check:")
+        print("  1. GPU is properly installed")
+        print("  2. CUDA drivers are installed")
+        print("  3. PyTorch was installed with CUDA support")
+        print(f"  4. Run 'nvidia-smi' to verify GPU availability")
+        sys.exit(1)
+
+    device = torch.device(args.device)
     print(f'Using device: {device}')
-    
+
+    if device.type == 'cuda':
+        print(f'GPU: {torch.cuda.get_device_name(0)}')
+        print(f'VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB')
+
     # Initialize model
     model = load_model(args, config, device)
     print(f'Model parameters: {sum(p.numel() for p in model.parameters()):,}')
