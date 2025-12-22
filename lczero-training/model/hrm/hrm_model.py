@@ -81,7 +81,7 @@ class HierarchicalReasoningModel_ACTV1Config(BaseModel):
     forward_dtype: str = "bfloat16"
 
 class HierarchicalReasoningModel_ACTV1Block(nn.Module):
-    def __init__(self, config: HierarchicalReasoningModel_ACTV1Config, layer_idx: int = 0, total_layers: int = 1) -> None:
+    def __init__(self, config: HierarchicalReasoningModel_ACTV1Config) -> None:
         super().__init__()
 
         self.self_attn = Attention(
@@ -97,40 +97,30 @@ class HierarchicalReasoningModel_ACTV1Block(nn.Module):
         )
         self.norm_eps = config.rms_norm_eps
 
-        # No residual scaling - standard transformer approach
-        # Original aggressive scaling (total_layers / (layer_idx + 1)) ** 0.5 caused inf in bfloat16
-        # Standard transformers use no scaling (scale=1.0) which is numerically stable
-        # Pre-norm architecture already provides good gradient flow without scaling
-        self.residual_scale = 1.0
-
     def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
-        # Pre-Norm (better gradient flow for deep networks)
-        # Self Attention with residual scaling
-        hidden_states = hidden_states + self.residual_scale * self.self_attn(cos_sin=cos_sin, hidden_states=rms_norm(hidden_states, variance_epsilon=self.norm_eps))
-        # Fully Connected with residual scaling
-        hidden_states = hidden_states + self.residual_scale * self.mlp(rms_norm(hidden_states, variance_epsilon=self.norm_eps))
+        # Post-Norm: normalize AFTER residual addition to bound activation magnitudes
+        # This is critical for numerical stability with multiple cycles
+        hidden_states = rms_norm(
+            hidden_states + self.self_attn(cos_sin=cos_sin, hidden_states=hidden_states),
+            variance_epsilon=self.norm_eps
+        )
+        # MLP with post-norm
+        out = self.mlp(hidden_states)
+        hidden_states = rms_norm(hidden_states + out, variance_epsilon=self.norm_eps)
         return hidden_states
 
 
 class HierarchicalReasoningModel_ACTV1ReasoningModule(nn.Module):
-    def __init__(self, layers: List[HierarchicalReasoningModel_ACTV1Block], norm_eps: float = 1e-5, use_final_norm: bool = True):
+    def __init__(self, layers: List[HierarchicalReasoningModel_ACTV1Block]):
         super().__init__()
-
         self.layers = torch.nn.ModuleList(layers)
-        self.norm_eps = norm_eps
-        self.use_final_norm = use_final_norm
 
     def forward(self, hidden_states: torch.Tensor, input_injection: torch.Tensor, **kwargs) -> torch.Tensor:
         # Input injection (add)
         hidden_states = hidden_states + input_injection
-        # Layers
+        # Layers (post-norm blocks already bound output magnitudes, no final norm needed)
         for layer in self.layers:
             hidden_states = layer(hidden_states=hidden_states, **kwargs)
-
-        # Final norm - enabled by default for HRM (no weight sharing issue like TRM)
-        if self.use_final_norm:
-            hidden_states = rms_norm(hidden_states, variance_epsilon=self.norm_eps)
-
         return hidden_states
 
 
@@ -232,20 +222,18 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
                                               max_position_embeddings=64,
                                               base=self.config.rope_theta)
 
-        # Reasoning Layers with layer indices for residual scaling
+        # Reasoning Layers
         self.H_level = HierarchicalReasoningModel_ACTV1ReasoningModule(
-            layers=[HierarchicalReasoningModel_ACTV1Block(self.config, layer_idx=i, total_layers=self.config.H_layers) for i in range(self.config.H_layers)],
-            norm_eps=self.config.rms_norm_eps
+            layers=[HierarchicalReasoningModel_ACTV1Block(self.config) for _ in range(self.config.H_layers)]
         )
         self.L_level = HierarchicalReasoningModel_ACTV1ReasoningModule(
-            layers=[HierarchicalReasoningModel_ACTV1Block(self.config, layer_idx=i, total_layers=self.config.L_layers) for i in range(self.config.L_layers)],
-            norm_eps=self.config.rms_norm_eps
+            layers=[HierarchicalReasoningModel_ACTV1Block(self.config) for _ in range(self.config.L_layers)]
         )
         
-        # Initial states - increased std for better cycle effectiveness
-        # Original models use std=1.0, using 0.1 as a moderate value for bfloat16 stability
-        self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=0.1), persistent=True)
-        self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=0.1), persistent=True)
+        # Initial states - use std=1.0 to match original HRM
+        # Post-norm architecture bounds outputs, so std=1.0 is stable
+        self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1.0), persistent=True)
+        self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1.0), persistent=True)
 
         # Q head special init
         # Init Q to (almost) zero for faster learning during bootstrapping

@@ -134,6 +134,12 @@ Examples:
         action='store_true',
         help='Stop batch training if any model fails (default: continue to next model)'
     )
+    parser.add_argument(
+        '--skip',
+        type=int,
+        default=0,
+        help='Number of configs to skip from the beginning (default: 0)'
+    )
 
     args = parser.parse_args()
 
@@ -163,6 +169,7 @@ Examples:
     print(f"Device: {args.device}")
     print(f"Resume from checkpoints: {args.resume}")
     print(f"Stop on error: {args.stop_on_error}")
+    print(f"Skipping first: {args.skip} config(s)")
     print("\nConfigs to train:")
     for i, config_file in enumerate(config_files, 1):
         try:
@@ -189,6 +196,11 @@ Examples:
     # Track results
     start_time = datetime.now()
     results = []
+
+    # Skip configs if requested
+    if args.skip > 0:
+        print(f"\nSkipping first {args.skip} config(s)...")
+        config_files = config_files[args.skip:]
 
     # Train each model
     for i, config_file in enumerate(config_files, 1):
