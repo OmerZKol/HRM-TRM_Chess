@@ -130,6 +130,64 @@ class TensorFlowStyleMovesLeftHead(nn.Module):
         return moves_left
 
 
+class TensorFlowStylePolicyHead(nn.Module):
+    """
+    Policy head following TensorFlow Lc0 style.
+    Uses all spatial information instead of just first token.
+    """
+
+    def __init__(self, hidden_size, num_actions=1858, embedding_size=32):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.embedding_size = embedding_size
+        self.num_actions = num_actions
+
+        # Step 1: Policy embedding layer (processes each square)
+        self.policy_embedding = CastedLinear(hidden_size, embedding_size, bias=True)
+
+        # Step 2: Dense processing after flattening
+        self.policy_dense1 = CastedLinear(embedding_size * 64, 256, bias=True)
+
+        # Step 3: Final output layer
+        self.policy_dense2 = CastedLinear(256, num_actions, bias=True)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        """Initialize weights following TensorFlow Glorot normal initialization"""
+        for module in [self.policy_embedding, self.policy_dense1, self.policy_dense2]:
+            if hasattr(module, 'weight'):
+                nn.init.xavier_normal_(module.weight)
+            if hasattr(module, 'bias') and module.bias is not None:
+                nn.init.zeros_(module.bias)
+
+    def forward(self, hidden_states):
+        """
+        Forward pass using all spatial information.
+
+        Args:
+            hidden_states: [batch_size, 64, hidden_size] - all square representations
+
+        Returns:
+            policy_logits: [batch_size, num_actions] - logits for all chess moves
+        """
+        batch_size = hidden_states.shape[0]
+
+        # Step 1: Apply embedding to each square
+        policy_embedded = F.relu(self.policy_embedding(hidden_states))  # [batch, 64, embedding_size]
+
+        # Step 2: Flatten spatial dimensions
+        policy_flattened = policy_embedded.reshape(batch_size, -1)  # [batch, 64 * embedding_size]
+
+        # Step 3: Dense processing
+        policy_hidden = F.relu(self.policy_dense1(policy_flattened))  # [batch, 256]
+
+        # Step 4: Final output (no activation for logits)
+        policy_logits = self.policy_dense2(policy_hidden)  # [batch, num_actions]
+
+        return policy_logits
+
+
 class CombinedTensorFlowStyleHeads(nn.Module):
     """
     Combined value and moves left heads for efficient processing.

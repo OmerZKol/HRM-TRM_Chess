@@ -15,11 +15,12 @@ from model.common.gating import Gating, ma_gating
 # Chess-specific imports (optional, only used when chess features enabled)
 try:
     from model.heads.attention_policy import AttentionPolicyHead
-    from model.heads.value_heads import TensorFlowStyleValueHead, TensorFlowStyleMovesLeftHead
+    from model.heads.value_heads import TensorFlowStyleValueHead, TensorFlowStyleMovesLeftHead, TensorFlowStylePolicyHead
 except ImportError:
     AttentionPolicyHead = None
     TensorFlowStyleValueHead = None
     TensorFlowStyleMovesLeftHead = None
+    TensorFlowStylePolicyHead = None
 
 @dataclass
 class TinyRecursiveReasoningModel_ACTV1InnerCarry:
@@ -228,13 +229,14 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
                     raise ImportError("AttentionPolicyHead not available. Check imports.")
                 self.move_head = AttentionPolicyHead(self.config.hidden_size, self.config.num_heads)
             else:
-                # Use direct policy head
-                self.move_head = CastedLinear(self.config.hidden_size, self.config.num_actions, bias=True)
-                # AlphaZero-style initialization for policy head
-                with torch.no_grad():
-                    self.move_head.weight.normal_(0, 0.1)
-                    if self.move_head.bias is not None:
-                        self.move_head.bias.zero_()
+                # Use TensorFlow-style policy head that processes all spatial information
+                if TensorFlowStylePolicyHead is None:
+                    raise ImportError("TensorFlowStylePolicyHead not available. Check imports.")
+                self.move_head = TensorFlowStylePolicyHead(
+                    hidden_size=self.config.hidden_size,
+                    num_actions=self.config.num_actions,
+                    embedding_size=32
+                )
 
         # Value prediction head
         if self.config.use_value_prediction:
@@ -373,9 +375,8 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
                 move_logits, attention_weights = self.move_head(z_H)
                 move_logits = move_logits.to(torch.float32)
             else:
-                # Use direct policy: use specified token position
-                move_token_idx = self.config.move_prediction_from_token
-                move_logits = self.move_head(z_H[:, move_token_idx]).to(torch.float32)
+                # Use TensorFlow-style policy: pass all square representations
+                move_logits = self.move_head(z_H).to(torch.float32)
 
         # Value prediction outputs
         value_logits = None
