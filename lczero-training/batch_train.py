@@ -92,6 +92,9 @@ Examples:
   # Train all configs with custom data path
   python batch_train.py --config-dir config/ --data-path data/my-training-data
 
+  # Train only TRM models
+  python batch_train.py --config-dir config/ --model-type trm
+
   # Continue training with existing checkpoints
   python batch_train.py --config-dir config/ --resume
         """
@@ -140,6 +143,12 @@ Examples:
         default=0,
         help='Number of configs to skip from the beginning (default: 0)'
     )
+    parser.add_argument(
+        '--model-type',
+        type=str,
+        default=None,
+        help='Only train configs with this model_type (e.g., trm, hrm, baseline)'
+    )
 
     args = parser.parse_args()
 
@@ -160,6 +169,21 @@ Examples:
                 print(f"Error: Config file not found: {config_file}")
                 return 1
 
+    # Filter by model type if specified
+    if args.model_type:
+        filtered_configs = []
+        for config_file in config_files:
+            try:
+                config = load_config(config_file)
+                if config.get('model_type') == args.model_type:
+                    filtered_configs.append(config_file)
+            except Exception as e:
+                print(f"Warning: Could not load {config_file}: {e}")
+        config_files = filtered_configs
+        if not config_files:
+            print(f"Error: No configs found with model_type='{args.model_type}'")
+            return 1
+
     # Print summary
     print("\n" + "="*80)
     print("BATCH TRAINING SUMMARY")
@@ -167,6 +191,8 @@ Examples:
     print(f"Total configs to train: {len(config_files)}")
     print(f"Data path: {args.data_path}")
     print(f"Device: {args.device}")
+    if args.model_type:
+        print(f"Model type filter: {args.model_type}")
     print(f"Resume from checkpoints: {args.resume}")
     print(f"Stop on error: {args.stop_on_error}")
     print(f"Skipping first: {args.skip} config(s)")
