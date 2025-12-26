@@ -1,13 +1,12 @@
-# Configuration for TRM Chess Model with halt_max_steps=10 WITHOUT q-continue loss
-# Model: ChessTRMNet (TinyRecursiveReasoningModel_ACTV1) - Multi-step adaptive reasoning
-# This config disables the q-continue loss, using only q-halt loss
+# Configuration for TRM Chess Model with halt_max_steps=1
+# Model: ChessTRMNet (TinyRecursiveReasoningModel_ACTV1) - Single-step reasoning
 
 # Training parameters
 batch_size: 512
 learning_rate: 0.0001
-epochs: 70
+epochs: 40
 
-name: "trm_halt4_no_qcontinue"
+name: "trm_halt1_3cycle"
 
 # Data sampling
 sample_rate: 1  # Use all data (set to higher value for faster training with less data)
@@ -33,13 +32,13 @@ trm_config:
   seq_len: 64  # Input sequence length (64 chess squares)
 
   # Reasoning cycles
-  H_cycles: 1  # High-level reasoning cycles
-  L_cycles: 1  # Low-level reasoning cycles per H-cycle
+  H_cycles: 3  # High-level reasoning cycles
+  L_cycles: 6  # Low-level reasoning cycles per H-cycle
   H_layers: 1  # Ignored in TRM (uses L_level for both H and L)
   L_layers: 3  # Number of transformer layers in L-level
 
   # Model dimensions
-  hidden_size: 512
+  hidden_size: 256
   expansion: 2.0
   num_heads: 8
 
@@ -47,10 +46,10 @@ trm_config:
   pos_encodings: rope
   rope_theta: 10000.0
 
-  # Halting configuration - MULTI-STEP with adaptive computation
-  halt_max_steps: 4
-  halt_exploration_prob: 0.1
-  no_ACT_continue: true  # Simplified halting (TRM-specific)
+  # Halting configuration - SINGLE STEP
+  halt_max_steps: 1
+  halt_exploration_prob: 0.0
+  no_ACT_continue: false  # Simplified halting (TRM-specific)
 
   # Chess-specific configuration (always enabled in TRM)
   square_feature_dim: 112

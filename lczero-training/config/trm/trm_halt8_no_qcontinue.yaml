@@ -1,12 +1,14 @@
-# Configuration for TRM Chess Model with halt_max_steps=10
+# Configuration for TRM Chess Model with halt_max_steps=10 WITHOUT q-continue loss
 # Model: ChessTRMNet (TinyRecursiveReasoningModel_ACTV1) - Multi-step adaptive reasoning
+# This config disables the q-continue loss, using only q-halt loss
 
 # Training parameters
 batch_size: 512
 learning_rate: 0.0001
-epochs: 70
+epochs: 40
 
-name: "trm_halt4"
+name: "trm_halt8_no_qcontinue"
+
 # Data sampling
 sample_rate: 1  # Use all data (set to higher value for faster training with less data)
 
@@ -37,7 +39,7 @@ trm_config:
   L_layers: 3  # Number of transformer layers in L-level
 
   # Model dimensions
-  hidden_size: 512
+  hidden_size: 256
   expansion: 2.0
   num_heads: 8
 
@@ -46,9 +48,9 @@ trm_config:
   rope_theta: 10000.0
 
   # Halting configuration - MULTI-STEP with adaptive computation
-  halt_max_steps: 4
+  halt_max_steps: 8
   halt_exploration_prob: 0.1
-  no_ACT_continue: false  # Simplified halting (TRM-specific)
+  no_ACT_continue: true  # Simplified halting (TRM-specific)
 
   # Chess-specific configuration (always enabled in TRM)
   square_feature_dim: 112

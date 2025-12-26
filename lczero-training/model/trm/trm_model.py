@@ -343,22 +343,14 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         # Input encoding
         input_embeddings = self._input_embeddings(batch["inputs"])
 
-        # Forward iterations
-        it = 0
+        # Forward iterations - all cycles with full gradient flow
         z_H, z_L = carry.z_H, carry.z_L
 
-        # H_cycles-1 without grad
-        with torch.no_grad():
-            for _H_step in range(self.config.H_cycles-1):
-                for _L_step in range(self.config.L_cycles):
-                    z_H_plus_input = z_H + input_embeddings
-                    z_L = self.L_level(z_L, z_H_plus_input, **seq_info)
-                z_H = self.L_level(z_H, z_L, **seq_info)
-        # 1 with grad
-        for _L_step in range(self.config.L_cycles):
-            z_H_plus_input = z_H + input_embeddings
-            z_L = self.L_level(z_L, z_H_plus_input, **seq_info)
-        z_H = self.L_level(z_H, z_L, **seq_info)
+        for _H_step in range(self.config.H_cycles):
+            for _L_step in range(self.config.L_cycles):
+                z_H_plus_input = z_H + input_embeddings
+                z_L = self.L_level(z_L, z_H_plus_input, **seq_info)
+            z_H = self.L_level(z_H, z_L, **seq_info)
 
         # Outputs (no final norm needed - post-norm blocks already bound magnitudes)
         new_carry = TinyRecursiveReasoningModel_ACTV1InnerCarry(z_H=z_H.detach(), z_L=z_L.detach())  # New carry no grad

@@ -112,7 +112,7 @@ class TinyRecursiveReasoningModel_ACTV1Config(BaseModel):
     forward_dtype: str = "bfloat16"
 
 class TinyRecursiveReasoningModel_ACTV1Block(nn.Module):
-    def __init__(self, config: TinyRecursiveReasoningModel_ACTV1Config, layer_idx: int = 0, total_layers: int = 1) -> None:
+    def __init__(self, config: TinyRecursiveReasoningModel_ACTV1Config) -> None:
         super().__init__()
 
         self.config = config
@@ -135,56 +135,38 @@ class TinyRecursiveReasoningModel_ACTV1Block(nn.Module):
         )
         self.norm_eps = config.rms_norm_eps
 
-        # No residual scaling - standard transformer approach
-        # Original aggressive scaling (total_layers / (layer_idx + 1)) ** 0.5 caused inf in bfloat16
-        # Standard transformers use no scaling (scale=1.0) which is numerically stable
-        # Pre-norm architecture already provides good gradient flow without scaling
-        self.residual_scale = 1.0
-
     def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
         # B, L, D = hidden_states.shape
-        # Pre-Norm (better gradient flow for deep networks)
+        # Post-Norm: normalize AFTER residual addition to bound activation magnitudes
+        # This is critical for numerical stability with weight sharing and multiple cycles
         if self.config.mlp_t:
             hidden_states = hidden_states.transpose(1,2)
-            out = self.mlp_t(rms_norm(hidden_states, variance_epsilon=self.norm_eps))
-            hidden_states = hidden_states + self.residual_scale * out
+            out = self.mlp_t(hidden_states)
+            hidden_states = rms_norm(hidden_states + out, variance_epsilon=self.norm_eps)
             hidden_states = hidden_states.transpose(1,2)
         else:
-            # Self Attention with residual scaling
-            normed = rms_norm(hidden_states, variance_epsilon=self.norm_eps)
+            # Self Attention with post-norm
+            hidden_states = rms_norm(
+                hidden_states + self.self_attn(cos_sin=cos_sin, hidden_states=hidden_states),
+                variance_epsilon=self.norm_eps
+            )
 
-            attn_out = self.self_attn(cos_sin=cos_sin, hidden_states=normed)
-
-            scaled_attn = self.residual_scale * attn_out
-
-            hidden_states = hidden_states + scaled_attn
-
-        # Fully Connected with residual scaling
-        normed = rms_norm(hidden_states, variance_epsilon=self.norm_eps)
-        out = self.mlp(normed)
-
-        scaled_mlp = self.residual_scale * out
-        hidden_states = hidden_states + scaled_mlp
+        # MLP with post-norm
+        out = self.mlp(hidden_states)
+        hidden_states = rms_norm(hidden_states + out, variance_epsilon=self.norm_eps)
         return hidden_states
 
 class TinyRecursiveReasoningModel_ACTV1ReasoningModule(nn.Module):
-    def __init__(self, layers: List[TinyRecursiveReasoningModel_ACTV1Block], norm_eps: float = 1e-5, use_final_norm: bool = True):
+    def __init__(self, layers: List[TinyRecursiveReasoningModel_ACTV1Block]):
         super().__init__()
         self.layers = torch.nn.ModuleList(layers)
-        self.norm_eps = norm_eps
-        self.use_final_norm = use_final_norm
 
     def forward(self, hidden_states: torch.Tensor, input_injection: torch.Tensor, **kwargs) -> torch.Tensor:
         # Input injection (add)
         hidden_states = hidden_states + input_injection
-        #Layers
-        for layer_idx, layer in enumerate(self.layers):
+        # Layers (post-norm blocks already bound output magnitudes, no final norm needed)
+        for layer in self.layers:
             hidden_states = layer(hidden_states=hidden_states, **kwargs)
-
-        # Final norm - enabled by default for baseline (no weight sharing issue)
-        if self.use_final_norm:
-            hidden_states = rms_norm(hidden_states, variance_epsilon=self.norm_eps)
-
         return hidden_states
 
 
@@ -241,14 +223,12 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
 
         # Reasoning Layers - single level (baseline: uses H_layers, not L_layers)
         self.H_level = TinyRecursiveReasoningModel_ACTV1ReasoningModule(
-            layers=[TinyRecursiveReasoningModel_ACTV1Block(self.config, layer_idx=i, total_layers=self.config.H_layers) for i in range(self.config.H_layers)],
-            norm_eps=self.config.rms_norm_eps
+            layers=[TinyRecursiveReasoningModel_ACTV1Block(self.config) for _ in range(self.config.H_layers)]
         )
 
         # Initial state (single level only - no L_init in baseline)
-        # Increased std for better cycle effectiveness
-        # Original models use std=1.0, using 0.1 as a moderate value for bfloat16 stability
-        self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=0.1), persistent=True)
+        # Post-norm architecture bounds outputs, so std=1.0 is stable
+        self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1.0), persistent=True)
 
         # Q head special init
         # Init Q to (almost) zero for faster learning during bootstrapping
