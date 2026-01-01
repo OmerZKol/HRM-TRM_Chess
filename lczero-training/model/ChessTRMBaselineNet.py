@@ -2,10 +2,8 @@
 TRM Baseline (Single-level transformer) wrapper for chess training.
 
 This wrapper provides backward compatibility for training scripts.
-It applies torch.tanh() to the value output as expected by the training code.
 """
 
-import torch
 import torch.nn as nn
 
 from model.trm import TinyRecursiveReasoningModel_ACTV1
@@ -18,8 +16,7 @@ class ChessTRMBaselineNet(nn.Module):
 
     The baseline is a simplified version without hierarchical H/L split or inner cycles.
 
-    Note: The torch.tanh() applied to value outputs is intentional for compatibility
-    with the training pipeline.
+    Value output is raw WDL logits - softmax is applied in the loss function.
     """
 
     def __init__(self, config):
@@ -39,11 +36,10 @@ class ChessTRMBaselineNet(nn.Module):
 
         Returns:
             pi: Policy logits [batch_size, action_size]
-            v: Value predictions with tanh applied [batch_size, 3]
+            v: Value logits in WDL format [batch_size, 3] (softmax applied in loss)
             moves_left: Moves left predictions [batch_size, 1]
             q_info: Dictionary with Q-learning information
         """
         pi, v, moves_left, q_info = self.bridge(s)
 
-        # Apply tanh to value output for training compatibility
-        return pi, torch.tanh(v), moves_left, q_info
+        return pi, v, moves_left, q_info

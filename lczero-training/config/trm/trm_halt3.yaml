@@ -1,14 +1,12 @@
-# Configuration for HRM Chess Model with halt_max_steps=10 WITHOUT q-continue loss
-# Model: ChessNNet (HierarchicalReasoningModel_ACTV1) - Multi-step reasoning
-# This config disables the q-continue loss, using only q-halt loss
+# Configuration for TRM Chess Model with halt_max_steps=10
+# Model: ChessTRMNet (TinyRecursiveReasoningModel_ACTV1) - Multi-step adaptive reasoning
 
 # Training parameters
 batch_size: 512
 learning_rate: 0.0001
-epochs: 80
+epochs: 40
 
-name: "hrm_halt4_no_qcontinue"
-
+name: "trm_halt3"
 # Data sampling
 sample_rate: 1  # Use all data (set to higher value for faster training with less data)
 
@@ -23,39 +21,39 @@ value_loss_weight: 1.0
 moves_left_loss_weight: 0.01
 
 # Model architecture
-model_type: hrm
+model_type: trm
 board_x: 8
 board_y: 8
 action_size: 1858
 
-# HRM specific parameters
-hrm_config:
-  seq_len: 64  # Input sequence length (number of tokens)
+# TRM specific parameters
+trm_config:
+  seq_len: 64  # Input sequence length (64 chess squares)
+
   # Reasoning cycles
-  H_cycles: 2
-  L_cycles: 2
-  H_layers: 2
-  L_layers: 2
+  H_cycles: 1  # High-level reasoning cycles
+  L_cycles: 1  # Low-level reasoning cycles per H-cycle
+  H_layers: 1  # Ignored in TRM (uses L_level for both H and L)
+  L_layers: 3  # Number of transformer layers in L-level
 
   # Model dimensions
-  hidden_size: 512
+  hidden_size: 256
   expansion: 2.0
   num_heads: 8
-  action_size: 1858
 
   # Positional encodings
   pos_encodings: rope
   rope_theta: 10000.0
 
   # Halting configuration - MULTI-STEP with adaptive computation
-  halt_max_steps: 4
+  halt_max_steps: 3
   halt_exploration_prob: 0.1
+  no_ACT_continue: false  # Simplified halting (TRM-specific)
 
-  # Q-loss configuration - DISABLE q-continue loss
-  no_ACT_continue: true
-
-  # Chess-specific configuration
+  # Chess-specific configuration (always enabled in TRM)
   square_feature_dim: 112
+  board_x: 8
+  board_y: 8
 
   # Output heads
   use_move_prediction: true
@@ -65,11 +63,18 @@ hrm_config:
   value_prediction_from_token: 0
   moves_left_from_token: 0
 
-  # TensorFlow-style heads for spatial processing
-  use_tensorflow_style_heads: true
-  use_attention_policy: true
+  # Positional encoding style
+  arc_encoding: true  # tfprocess.py style (concat pos_enc with features)
+  pos_enc_dim: 16
+
+  # Head architecture
+  use_attention_policy: true  # Attention-based policy head
+  use_tensorflow_style_heads: true  # TF-style value/moves heads
   value_embedding_size: 32
   moves_embedding_size: 8
+
+  # TRM-specific options
+  mlp_t: false  # Use attention instead of MLP on sequence dimension
 
   # Data type
   forward_dtype: bfloat16

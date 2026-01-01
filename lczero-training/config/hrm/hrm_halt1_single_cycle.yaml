@@ -37,7 +37,7 @@ hrm_config:
   L_layers: 2
   
   # Model dimensions
-  hidden_size: 512
+  hidden_size: 256
   expansion: 2.0
   num_heads: 8
   action_size: 1858

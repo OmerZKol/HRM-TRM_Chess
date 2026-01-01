@@ -95,10 +95,12 @@ class TinyRecursiveReasoningModel_ACTV1Config(BaseModel):
     forward_dtype: str = "bfloat16"
 
 class TinyRecursiveReasoningModel_ACTV1Block(nn.Module):
-    def __init__(self, config: TinyRecursiveReasoningModel_ACTV1Config) -> None:
+    def __init__(self, config: TinyRecursiveReasoningModel_ACTV1Config, residual_alpha: float = 1.0) -> None:
         super().__init__()
 
         self.config = config
+        self.residual_alpha = residual_alpha  # DeepNorm scaling factor
+
         if self.config.mlp_t:
             self.mlp_t = SwiGLU(
                 hidden_size=self.config.seq_len, # L
@@ -120,23 +122,21 @@ class TinyRecursiveReasoningModel_ACTV1Block(nn.Module):
 
     def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
         # B, L, D = hidden_states.shape
-        # Post-Norm: normalize AFTER residual addition to bound activation magnitudes
-        # This is critical for numerical stability with weight sharing and multiple cycles
+        # Post-Norm with DeepNorm scaling: x + out/alpha
+        # This prevents gradient explosion through deep recursive cycles
         if self.config.mlp_t:
             hidden_states = hidden_states.transpose(1,2)
             out = self.mlp_t(hidden_states)
-            hidden_states = rms_norm(hidden_states + out, variance_epsilon=self.norm_eps)
+            hidden_states = rms_norm(hidden_states + out / self.residual_alpha, variance_epsilon=self.norm_eps)
             hidden_states = hidden_states.transpose(1,2)
         else:
-            # Self Attention with post-norm
-            hidden_states = rms_norm(
-                hidden_states + self.self_attn(cos_sin=cos_sin, hidden_states=hidden_states),
-                variance_epsilon=self.norm_eps
-            )
+            # Self Attention with post-norm and DeepNorm scaling
+            out = self.self_attn(cos_sin=cos_sin, hidden_states=hidden_states)
+            hidden_states = rms_norm(hidden_states + out / self.residual_alpha, variance_epsilon=self.norm_eps)
 
-        # MLP with post-norm
+        # MLP with post-norm and DeepNorm scaling
         out = self.mlp(hidden_states)
-        hidden_states = rms_norm(hidden_states + out, variance_epsilon=self.norm_eps)
+        hidden_states = rms_norm(hidden_states + out / self.residual_alpha, variance_epsilon=self.norm_eps)
         return hidden_states
 
 class TinyRecursiveReasoningModel_ACTV1ReasoningModule(nn.Module):
@@ -205,9 +205,15 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
                 base=self.config.rope_theta
             )
 
-        # Reasoning Layers
+        # Reasoning Layers with DeepNorm scaling
+        # Effective depth = H_cycles * (L_cycles + 1) * L_layers * 2 sublayers
+        # The +1 accounts for the H update step after each L_cycles iteration
+        import math
+        effective_depth = self.config.H_cycles * (self.config.L_cycles + 1) * self.config.L_layers * 2
+        residual_alpha = (2 * effective_depth) ** 0.25  # DeepNorm: α = (2N)^0.25
+
         self.L_level = TinyRecursiveReasoningModel_ACTV1ReasoningModule(
-            layers=[TinyRecursiveReasoningModel_ACTV1Block(self.config) for _ in range(self.config.L_layers)]
+            layers=[TinyRecursiveReasoningModel_ACTV1Block(self.config, residual_alpha=residual_alpha) for _ in range(self.config.L_layers)]
         )
 
         # Initial states - use std=1.0 to match original TRM

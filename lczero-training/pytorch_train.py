@@ -41,7 +41,7 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: ChessLoss,
     """Evaluate model on validation set"""
     model.eval()
     total_losses = {'policy_loss': 0, 'value_loss': 0, 'moves_left_loss': 0,
-                   'reg_loss': 0, 'total_loss': 0, "move_accuracy": 0, 'q_loss': 0}
+                   'reg_loss': 0, 'total_loss': 0, "move_accuracy": 0, "move_top3_accuracy": 0, 'q_loss': 0}
     num_batches = 0
     total_recursion_steps = 0
     num_recursion_samples = 0
@@ -109,6 +109,7 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: ChessLoss,
             total_losses['q_loss'] += loss_dict['q_loss']
             total_losses['total_loss'] += loss_dict['total_loss']
             total_losses['move_accuracy'] += loss_dict['policy_accuracy']
+            total_losses['move_top3_accuracy'] += loss_dict['policy_top3_accuracy']
 
             num_batches += 1
 
@@ -127,13 +128,14 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: ChessLoss,
 def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
                 optimizer: torch.optim.Optimizer, device: torch.device,
                 scaler: torch.cuda.amp.GradScaler = None,
-                gradient_accumulation_steps: int = 1) -> dict:
+                gradient_accumulation_steps: int = 1,
+                grad_clip_max_norm: float = 1.0) -> dict:
     """Train for one epoch with optional mixed precision and gradient accumulation"""
     model.train()
 
     total_losses = {'policy_loss': 0, 'value_loss': 0, 'moves_left_loss': 0,
                    'reg_loss': 0, 'q_halt_loss': 0, 'q_continue_loss': 0, 'q_loss': 0,
-                    'total_loss': 0, 'move_accuracy': 0}
+                    'total_loss': 0, 'move_accuracy': 0, 'move_top3_accuracy': 0}
     num_batches = 0
     total_recursion_steps = 0
     num_recursion_samples = 0
@@ -270,11 +272,11 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
             if use_amp:
                 # Unscale gradients before clipping when using AMP
                 scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip_max_norm)
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip_max_norm)
                 optimizer.step()
             optimizer.zero_grad()
 
@@ -307,6 +309,7 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
         total_losses['reg_loss'] += loss_dict['reg_loss']
         total_losses['total_loss'] += loss_dict['total_loss']
         total_losses['move_accuracy'] += loss_dict['policy_accuracy']
+        total_losses['move_top3_accuracy'] += loss_dict['policy_top3_accuracy']
         num_batches += 1
 
     # Average losses and accuracy
@@ -496,7 +499,7 @@ def main():
 
     # Optimize data loading with multiple workers and pinned memory
     # num_workers = config.get('num_workers', 16)  # Use 16 workers by default for parallel data loading
-    num_workers = 12
+    num_workers = 16
     print(f"[Main] Creating DataLoaders with {num_workers} workers...")
     train_dataloader = DataLoader(train_dataset, batch_size=config.get('batch_size', 128),
                             shuffle=True, num_workers=num_workers, pin_memory=True,
@@ -539,6 +542,7 @@ def main():
     use_amp = config.get('use_amp', False) and device.type == 'cuda' and not use_bfloat16
     scaler = torch.cuda.amp.GradScaler() if use_amp else None
     gradient_accumulation_steps = config.get('gradient_accumulation_steps', 1)
+    grad_clip_max_norm = config.get('grad_clip_max_norm', 1.0)
 
     if use_amp:
         print(f'Using Automatic Mixed Precision (AMP) training with float16')
@@ -547,6 +551,7 @@ def main():
     if gradient_accumulation_steps > 1:
         print(f'Using gradient accumulation with {gradient_accumulation_steps} steps')
         print(f'Effective batch size: {config.get("batch_size", 64) * gradient_accumulation_steps}')
+    print(f'Gradient clipping max_norm: {grad_clip_max_norm}')
 
     # Initialize TensorBoard writer
     log_dir = f"runs/{config.get('name')}"
@@ -566,7 +571,8 @@ def main():
         print(f'\nEpoch {epoch+1}/{config.get('epochs')}')
 
         losses = train_epoch(model, train_dataloader, criterion, optimizer, device,
-                           scaler=scaler, gradient_accumulation_steps=gradient_accumulation_steps)
+                           scaler=scaler, gradient_accumulation_steps=gradient_accumulation_steps,
+                           grad_clip_max_norm=grad_clip_max_norm)
         
         # Step the learning rate scheduler
         scheduler.step()

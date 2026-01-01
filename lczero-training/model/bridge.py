@@ -31,7 +31,7 @@ class AlphaZeroBridge(nn.Module):
 
         Returns:
             pi: [batch_size, action_size] - Policy logits (NOT log probabilities)
-            v: [batch_size, 1] - Value predictions
+            v: [batch_size, 3] - Value predictions
             moves_left: [batch_size, 1] - Moves left predictions
             q_info: Dict containing Q-learning information
         """

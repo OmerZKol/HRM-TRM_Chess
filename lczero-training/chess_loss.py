@@ -55,7 +55,7 @@ class ChessLoss(nn.Module):
 
     def calculate_move_accuracy(self, policy_targets, policy_outputs):
         """
-        Calculate move prediction accuracy.
+        Calculate top-1 move prediction accuracy.
         """
         with torch.no_grad():
             # Get the target move (highest probability move)
@@ -65,13 +65,36 @@ class ChessLoss(nn.Module):
             move_preds = policy_outputs.clone()
 
             move_preds[~mask] = -1e9  # Mask illegal moves
-            # Get the predicted move (highest logit move)  
+            # Get the predicted move (highest logit move)
             predicted_moves = torch.argmax(move_preds, dim=-1)
 
             # Calculate accuracy
             correct_predictions = (predicted_moves == target_moves)
             accuracy = correct_predictions.float().mean()
-            
+
+            return accuracy
+
+    def calculate_top3_accuracy(self, policy_targets, policy_outputs):
+        """
+        Calculate top-3 move prediction accuracy.
+        Returns 1 if target move is in top 3 predictions, 0 otherwise.
+        """
+        with torch.no_grad():
+            # Get the target move (highest probability move)
+            target_moves = torch.argmax(policy_targets, dim=-1)
+
+            mask = policy_targets >= 0
+            move_preds = policy_outputs.clone()
+            move_preds[~mask] = -1e9  # Mask illegal moves
+
+            # Get top 3 predicted moves
+            _, top3_indices = torch.topk(move_preds, k=3, dim=-1)
+
+            # Check if target is in top 3
+            target_moves_expanded = target_moves.unsqueeze(-1)  # [batch, 1]
+            correct_predictions = (top3_indices == target_moves_expanded).any(dim=-1)
+            accuracy = correct_predictions.float().mean()
+
             return accuracy
     
     def loss_q_halt(self, policy_targets, policy_outputs, value_targets, value_outputs, q_info):
@@ -141,6 +164,7 @@ class ChessLoss(nn.Module):
         # L2 regularization
         reg_loss = sum(p.pow(2.0).sum() for p in model.parameters()) * self.reg_weight
         p_accuracy = self.calculate_move_accuracy(policy_targets, policy_outputs)
+        p_top3_accuracy = self.calculate_top3_accuracy(policy_targets, policy_outputs)
         # Combined loss
         total_loss = (self.policy_weight * p_loss +
                      self.value_weight * v_loss +
@@ -181,6 +205,7 @@ class ChessLoss(nn.Module):
             'reg_loss': reg_loss.item(),
             'total_loss': total_loss.item(),
             'policy_accuracy': p_accuracy.item(),
+            'policy_top3_accuracy': p_top3_accuracy.item(),
             'q_halt_loss': 0.0,
             'q_continue_loss': 0.0,
             'q_loss': 0.0

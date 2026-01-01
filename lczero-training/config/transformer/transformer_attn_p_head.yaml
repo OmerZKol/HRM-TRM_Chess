@@ -33,7 +33,7 @@ transformer_config:
   input_channels: 112  # LCZero board representation (historical + game state)
 
   # Model dimensions
-  hidden_size: 512     # Transformer hidden dimension (embedding size)
+  hidden_size: 256     # Transformer hidden dimension (embedding size)
   num_layers: 3        # Number of transformer blocks (depth)
   num_heads: 8         # Number of attention heads (must divide hidden_size)
   expansion: 2.0       # FFN expansion factor (FFN_dim = hidden_size * expansion) - configurable!

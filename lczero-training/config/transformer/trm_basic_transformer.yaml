@@ -5,7 +5,7 @@
 # Training parameters
 batch_size: 512
 learning_rate: 0.0001
-epochs: 70
+epochs: 40
 
 name: "trm_basic_transformer"
 
@@ -39,7 +39,7 @@ trm_config:
   L_layers: 0  # Ignored in baseline
 
   # Model dimensions
-  hidden_size: 512
+  hidden_size: 256
   expansion: 2.0
   num_heads: 8
 
