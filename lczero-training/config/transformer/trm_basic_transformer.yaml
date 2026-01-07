@@ -24,9 +24,6 @@ moves_left_loss_weight: 0.01
 
 # Model architecture
 model_type: trm_baseline
-board_x: 8
-board_y: 8
-action_size: 1858
 
 # TRM Baseline specific parameters
 trm_config:
@@ -58,8 +55,6 @@ trm_config:
 
   # Chess-specific configuration (always enabled)
   square_feature_dim: 112
-  board_x: 8
-  board_y: 8
 
   # Output heads
   use_move_prediction: true

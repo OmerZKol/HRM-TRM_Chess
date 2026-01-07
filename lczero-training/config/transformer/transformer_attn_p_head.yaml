@@ -23,14 +23,11 @@ moves_left_loss_weight: 0.01
 
 # Model architecture
 model_type: transformer
-board_x: 8
-board_y: 8
-action_size: 1858
 
 # Transformer specific parameters
 transformer_config:
   # Input processing
-  input_channels: 112  # LCZero board representation (historical + game state)
+  square_feature_dim: 112  # LCZero board representation (historical + game state)
 
   # Model dimensions
   hidden_size: 256     # Transformer hidden dimension (embedding size)

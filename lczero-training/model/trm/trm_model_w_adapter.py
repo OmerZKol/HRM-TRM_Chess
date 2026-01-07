@@ -94,6 +94,26 @@ class TinyRecursiveReasoningModel_ACTV1Config(BaseModel):
 
     forward_dtype: str = "bfloat16"
 
+    # Adapter config
+    adapter_bottleneck_size: int = 64  # Bottleneck dimension for concat adapter
+
+
+class ConcatAdapter(nn.Module):
+    """Adapter that concatenates recursion output and input, then projects through bottleneck."""
+    def __init__(self, hidden_size: int, bottleneck_size: int):
+        super().__init__()
+        # Down projection: 2*hidden_size (concat) -> bottleneck_size
+        self.down_proj = CastedLinear(hidden_size * 2, bottleneck_size, bias=False)
+        # Up projection: bottleneck_size -> hidden_size
+        self.up_proj = CastedLinear(bottleneck_size, hidden_size, bias=False)
+
+    def forward(self, z_recursion: torch.Tensor, z_input: torch.Tensor) -> torch.Tensor:
+        # Concatenate along last dimension: [batch, 64, hidden*2]
+        combined = torch.cat([z_recursion, z_input], dim=-1)
+        # Bottleneck with SiLU activation
+        return self.up_proj(F.silu(self.down_proj(combined)))
+
+
 class TinyRecursiveReasoningModel_ACTV1Block(nn.Module):
     def __init__(self, config: TinyRecursiveReasoningModel_ACTV1Config, residual_alpha: float = 1.0) -> None:
         super().__init__()
@@ -214,6 +234,9 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         self.L_level = TinyRecursiveReasoningModel_ACTV1ReasoningModule(
             layers=[TinyRecursiveReasoningModel_ACTV1Block(self.config, residual_alpha=residual_alpha) for _ in range(self.config.L_layers)]
         )
+
+        # Concat adapter for combining recursion state with input
+        self.concat_adapter = ConcatAdapter(config.hidden_size, config.adapter_bottleneck_size)
 
         # Initial states - use std=1.0 to match original TRM
         # Post-norm architecture bounds outputs, so std=1.0 is stable
@@ -353,7 +376,8 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
 
         for _H_step in range(self.config.H_cycles):
             for _L_step in range(self.config.L_cycles):
-                z_H_plus_input = z_H + input_embeddings
+                # Use adapter to combine recursion output with input (instead of addition)
+                z_H_plus_input = self.concat_adapter(z_H, input_embeddings)
                 z_L = self.L_level(z_L, z_H_plus_input, **seq_info)
             z_H = self.L_level(z_H, z_L, **seq_info)
 

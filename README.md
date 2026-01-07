@@ -50,6 +50,9 @@ python pytorch_train.py --config config/trm/trm_halt1.yaml --data-path data/trai
 # Train all configs in the config/ directory
 python batch_train.py --config-dir config/ --data-path data/training-run1--20250209-1017
 
+#Also there is this
+python batch_train.py --config-dir config/ --model-type trm_adapter --data-path data/training-run1--20250209-1017
+
 # View training logs with TensorBoard
 tensorboard --logdir runs/
 ```

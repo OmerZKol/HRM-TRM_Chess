@@ -53,7 +53,7 @@ class HierarchicalReasoningModel_ACTV1Config(BaseModel):
 
     # Move prediction config (NEW)
     use_move_prediction: bool = True
-    num_actions: int = 0  # Number of possible moves/actions
+    num_actions: int = 1858  # Number of possible moves/actions
     move_prediction_from_token: int = 0  # Which token position to use for move prediction
     
     # Value prediction config (NEW)

@@ -16,6 +16,7 @@ from model.SimpleChessNet import SimpleChessNet
 from model.ChessNNet import ChessNNet
 from model.ChessTRMNet import ChessTRMNet
 from model.ChessTRMBaselineNet import ChessTRMBaselineNet
+from model.ChessTRMAdapterNet import ChessTRMAdapterNet
 from model.transformer_chess_nn import TransformerChessNet
 from torch.utils.tensorboard import SummaryWriter
 from chess_dataset import ChessDataset
@@ -63,8 +64,8 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: ChessLoss,
             if torch.isnan(ml_target).any():
                 print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in ml_target")
 
-            # for HRM/TRM/TRM_baseline model, compute output with mixed precision for FlashAttention compatibility
-            if(criterion.model_type == "hrm" or criterion.model_type == "trm" or criterion.model_type == "trm_baseline"):
+            # for HRM/TRM/TRM_baseline/TRM_adapter model, compute output with mixed precision for FlashAttention compatibility
+            if(criterion.model_type == "hrm" or criterion.model_type == "trm" or criterion.model_type == "trm_baseline" or criterion.model_type == "trm_adapter"):
                 with torch.autocast(device_type=device.type, dtype=torch.float16):
                     model_output = model(planes)
             else:
@@ -182,8 +183,8 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
                 # Scale loss for gradient accumulation
                 total_loss = total_loss / gradient_accumulation_steps
         else:
-            # compute output with mixed precision for FlashAttention compatibility (HRM/TRM/TRM_baseline only)
-            if(criterion.model_type == "hrm" or criterion.model_type == "trm" or criterion.model_type == "trm_baseline"):
+            # compute output with mixed precision for FlashAttention compatibility (HRM/TRM/TRM_baseline/TRM_adapter only)
+            if(criterion.model_type == "hrm" or criterion.model_type == "trm" or criterion.model_type == "trm_baseline" or criterion.model_type == "trm_adapter"):
                 with torch.autocast(device_type=device.type, dtype=torch.float16):
                     model_output = model(planes)
                     policy_output, value_output, moves_left_output, q_output = model_output
@@ -362,6 +363,13 @@ def load_model(args, config, device):
                     print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
                 else:
                     model.load_state_dict(checkpoint)
+            elif config.get("model_type") == 'trm_adapter':
+                model = ChessTRMAdapterNet(config)
+                if 'model_state_dict' in checkpoint:
+                    model.load_state_dict(checkpoint['model_state_dict'])
+                    print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
+                else:
+                    model.load_state_dict(checkpoint)
             elif config.get("model_type") == 'transformer':
                 model = TransformerChessNet(config)
                 if 'model_state_dict' in checkpoint:
@@ -380,6 +388,8 @@ def load_model(args, config, device):
         return ChessTRMNet(config).to(device)
     if(config.get("model_type") == "trm_baseline"):
         return ChessTRMBaselineNet(config).to(device)
+    if(config.get("model_type") == "trm_adapter"):
+        return ChessTRMAdapterNet(config).to(device)
     if(config.get("model_type") == "transformer"):
         return TransformerChessNet(config).to(device)
 
@@ -485,7 +495,7 @@ def main():
     # random.seed()  # Reset seed for other random operations
 
 
-    # chunk_files = chunk_files[:10]
+    chunk_files = chunk_files[:10]
 
     train_split = int(0.9 * len(chunk_files)) # 90% for training, 10% for validation
 
@@ -537,8 +547,11 @@ def main():
     # Initialize mixed precision scaler for AMP (if enabled and on CUDA)
     # Note: Don't use gradient scaler with bfloat16 (not supported)
     # bfloat16 provides mixed precision benefits without gradient scaling
-    use_bfloat16 = (config.get('model_type') in ['hrm', 'trm'] and
-                    config.get(f'{config.get("model_type")}_config', {}).get('forward_dtype') == 'bfloat16')
+    model_type = config.get('model_type')
+    # trm_adapter uses trm_config, so map it accordingly
+    config_key = 'trm_config' if model_type == 'trm_adapter' else f'{model_type}_config'
+    use_bfloat16 = (model_type in ['hrm', 'trm', 'trm_adapter'] and
+                    config.get(config_key, {}).get('forward_dtype') == 'bfloat16')
     use_amp = config.get('use_amp', False) and device.type == 'cuda' and not use_bfloat16
     scaler = torch.cuda.amp.GradScaler() if use_amp else None
     gradient_accumulation_steps = config.get('gradient_accumulation_steps', 1)
@@ -559,7 +572,7 @@ def main():
     print(f'TensorBoard logs will be saved to: {log_dir}')
 
     # Early stopping parameters (hardcoded)
-    early_stopping_patience = 4  # Stop if no improvement for 4 validation checks (set to None to disable)
+    early_stopping_patience = 3  # Stop if no improvement for 3 validation checks (set to None to disable)
     best_val_loss = float('inf')
     epochs_without_improvement = 0
 

@@ -21,10 +21,10 @@ class ChessBoardEmbedding(nn.Module):
     Supports both additive and concatenative (arc_encoding) positional encoding styles.
     """
 
-    def __init__(self, input_channels=112, hidden_size=256, max_seq_len=64,
+    def __init__(self, square_feature_dim=112, hidden_size=256, max_seq_len=64,
                  arc_encoding=False, pos_enc_dim=16):
         super().__init__()
-        self.input_channels = input_channels
+        self.square_feature_dim = square_feature_dim
         self.hidden_size = hidden_size
         self.max_seq_len = max_seq_len
         self.arc_encoding = arc_encoding
@@ -35,9 +35,9 @@ class ChessBoardEmbedding(nn.Module):
             self.pos_enc = nn.Parameter(
                 torch.randn(64, pos_enc_dim) * 0.02
             )
-            # Project concatenated features: [input_channels + pos_enc_dim] -> hidden_size
+            # Project concatenated features: [square_feature_dim + pos_enc_dim] -> hidden_size
             self.square_projection = CastedLinear(
-                input_channels + pos_enc_dim, hidden_size, bias=True
+                square_feature_dim + pos_enc_dim, hidden_size, bias=True
             )
             # Gating mechanism (multiplicative + additive)
             from model.common.gating import ma_gating
@@ -46,7 +46,7 @@ class ChessBoardEmbedding(nn.Module):
         else:
             # Original transformer style: additive positional embeddings
             # Convert spatial board to sequence of square embeddings
-            self.square_projection = CastedLinear(input_channels, hidden_size, bias=True)
+            self.square_projection = CastedLinear(square_feature_dim, hidden_size, bias=True)
 
             # Positional embeddings for each square (0-63)
             self.position_embedding = CastedEmbedding(
@@ -73,7 +73,7 @@ class ChessBoardEmbedding(nn.Module):
         batch_size = board_tensor.shape[0]
 
         # Flatten spatial dimensions: [batch, 112, 64]
-        board_flat = board_tensor.view(batch_size, self.input_channels, 64)
+        board_flat = board_tensor.view(batch_size, self.square_feature_dim, 64)
 
         # Transpose to get features per square: [batch, 64, 112]
         square_features = board_flat.transpose(1, 2)
@@ -111,50 +111,6 @@ class ChessBoardEmbedding(nn.Module):
         positions = torch.arange(64, device=board_tensor.device)
         return embeddings, positions
 
-
-class StandardAttention(nn.Module):
-    """Standard PyTorch attention as fallback for CPU testing."""
-    
-    def __init__(self, hidden_size, num_heads):
-        super().__init__()
-        self.hidden_size = hidden_size
-        self.num_heads = num_heads
-        self.head_dim = hidden_size // num_heads
-        
-        self.qkv_proj = CastedLinear(hidden_size, 3 * hidden_size, bias=False)
-        self.o_proj = CastedLinear(hidden_size, hidden_size, bias=False)
-        
-    def forward(self, cos_sin, hidden_states):
-        batch_size, seq_len, _ = hidden_states.shape
-        
-        # Get Q, K, V
-        qkv = self.qkv_proj(hidden_states)
-        qkv = qkv.reshape(batch_size, seq_len, 3, self.num_heads, self.head_dim)
-        qkv = qkv.permute(2, 0, 3, 1, 4)  # [3, batch, heads, seq, head_dim]
-        query, key, value = qkv[0], qkv[1], qkv[2]
-        
-        # Apply RoPE if provided
-        if cos_sin is not None:
-            from model.common.layers import apply_rotary_pos_emb
-            cos, sin = cos_sin
-            query = query.transpose(1, 2)  # [batch, seq, heads, head_dim]
-            key = key.transpose(1, 2)
-            query, key = apply_rotary_pos_emb(query, key, cos, sin)
-            query = query.transpose(1, 2)  # back to [batch, heads, seq, head_dim] 
-            key = key.transpose(1, 2)
-        
-        # Standard attention
-        scale = self.head_dim ** -0.5
-        attn_weights = torch.matmul(query, key.transpose(-2, -1)) * scale
-        attn_weights = F.softmax(attn_weights, dim=-1)
-        
-        attn_output = torch.matmul(attn_weights, value)
-        attn_output = attn_output.transpose(1, 2).contiguous()
-        attn_output = attn_output.reshape(batch_size, seq_len, self.hidden_size)
-        
-        return self.o_proj(attn_output)
-
-
 class TransformerBlock(nn.Module):
     """
     Single transformer block with attention and feed-forward layers.
@@ -170,16 +126,13 @@ class TransformerBlock(nn.Module):
         self.attention_norm_eps = rms_norm_eps
         
         # Multi-head attention - use fallback for CPU
-        if use_flash_attn and torch.cuda.is_available():
-            self.attention = Attention(
-                hidden_size=hidden_size,
-                head_dim=self.head_dim,
-                num_heads=num_heads,
-                num_key_value_heads=num_heads,  # Full attention, no GQA
-                causal=False  # Chess is not causal - all squares can attend to each other
-            )
-        else:
-            self.attention = StandardAttention(hidden_size, num_heads)
+        self.attention = Attention(
+            hidden_size=hidden_size,
+            head_dim=self.head_dim,
+            num_heads=num_heads,
+            num_key_value_heads=num_heads,  # Full attention, no GQA
+            causal=False  # Chess is not causal - all squares can attend to each other
+        )
         
         # Pre-norm for feed-forward
         self.ffn_norm_eps = rms_norm_eps
@@ -238,14 +191,14 @@ class TransformerChessNet(nn.Module):
         # Extract transformer config or use defaults
         if config is not None:
             transformer_config = config.get('transformer_config', {})
-            policy_size = config.get('action_size', 1858)
+            policy_size = 1858
         else:
             # Fallback to defaults if no config provided (for backward compatibility)
             transformer_config = {}
             policy_size = 1858
 
         # Extract parameters from config
-        input_channels = transformer_config.get('input_channels', 112)
+        square_feature_dim = transformer_config.get('square_feature_dim', 112)
         hidden_size = transformer_config.get('hidden_size', 512)
         num_layers = transformer_config.get('num_layers', 4)
         num_heads = transformer_config.get('num_heads', 8)
@@ -272,7 +225,7 @@ class TransformerChessNet(nn.Module):
 
         # Board embedding
         self.board_embedding = ChessBoardEmbedding(
-            input_channels=input_channels,
+            square_feature_dim=square_feature_dim,
             hidden_size=hidden_size,
             max_seq_len=max_position_embeddings,
             arc_encoding=arc_encoding,
@@ -418,9 +371,8 @@ def test_transformer_chess_net():
 
     # Create test config
     config = {
-        'action_size': 1858,
         'transformer_config': {
-            'input_channels': 112,
+            'square_feature_dim': 112,
             'hidden_size': 512,
             'num_layers': 6,
             'num_heads': 8,

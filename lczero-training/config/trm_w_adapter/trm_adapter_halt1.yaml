@@ -1,12 +1,12 @@
-# Configuration for TRM Chess Model with halt_max_steps=1
-# Model: ChessTRMNet (TinyRecursiveReasoningModel_ACTV1) - Single-step reasoning
+# Configuration for TRM with Adapter - Single Step
+# Model: ChessTRMAdapterNet - Uses concat adapter for recursion instead of addition
 
 # Training parameters
 batch_size: 512
 learning_rate: 0.0001
 epochs: 40
 
-name: "trm_halt1"
+name: "trm_adapter_halt1"
 
 # Data sampling
 sample_rate: 1  # Use all data (set to higher value for faster training with less data)
@@ -22,7 +22,7 @@ value_loss_weight: 1.0
 moves_left_loss_weight: 0.01
 
 # Model architecture
-model_type: trm
+model_type: trm_adapter
 
 # TRM specific parameters
 trm_config:
@@ -46,7 +46,7 @@ trm_config:
   # Halting configuration - SINGLE STEP
   halt_max_steps: 1
   halt_exploration_prob: 0.0
-  no_ACT_continue: false  # Simplified halting (TRM-specific)
+  no_ACT_continue: true  # Simplified halting
 
   # Chess-specific configuration (always enabled in TRM)
   square_feature_dim: 112
@@ -71,6 +71,9 @@ trm_config:
 
   # TRM-specific options
   mlp_t: false  # Use attention instead of MLP on sequence dimension
+
+  # Adapter configuration
+  adapter_bottleneck_size: 64  # Bottleneck dimension for concat adapter
 
   # Data type
   forward_dtype: bfloat16
