@@ -12,11 +12,6 @@ from model.trm.trm_baseline import (
     TinyRecursiveReasoningModel_ACTV1Config,
     TinyRecursiveReasoningModel_ACTV1Carry,
 )
-from model.trm.trm_model_w_adapter import (
-    TinyRecursiveReasoningModel_ACTV1 as TinyRecursiveModel_ACTV1_Adapter,
-    TinyRecursiveReasoningModel_ACTV1Config as TinyRecursiveModel_ACTV1_AdapterConfig,
-    TinyRecursiveReasoningModel_ACTV1Carry as TinyRecursiveModel_ACTV1_AdapterCarry,
-)
 
 __all__ = [
     "TinyRecursiveModel_ACTV1",

@@ -1,13 +1,12 @@
-# Configuration for TRM with Adapter - 2 Cycles with Larger Adapter
-# Model: ChessTRMAdapterNet - Uses concat adapter for recursion instead of addition
-# This config uses more reasoning cycles and a larger adapter bottleneck
+# Configuration for TRM Chess Model with halt_max_steps=1
+# Model: ChessTRMNet (TinyRecursiveReasoningModel_ACTV1) - Single-step reasoning
 
 # Training parameters
 batch_size: 512
 learning_rate: 0.0001
-epochs: 40
+epochs: 20
 
-name: "trm_adapter_2cycle_large"
+name: "trm_halt1_single_cycle"
 
 # Data sampling
 sample_rate: 1  # Use all data (set to higher value for faster training with less data)
@@ -23,15 +22,15 @@ value_loss_weight: 1.0
 moves_left_loss_weight: 0.01
 
 # Model architecture
-model_type: trm_adapter
+model_type: trm
 
 # TRM specific parameters
 trm_config:
   seq_len: 64  # Input sequence length (64 chess squares)
 
-  # Reasoning cycles - more cycles for deeper reasoning
-  H_cycles: 2  # High-level reasoning cycles
-  L_cycles: 2  # Low-level reasoning cycles per H-cycle
+  # Reasoning cycles
+  H_cycles: 1  # High-level reasoning cycles
+  L_cycles: 1  # Low-level reasoning cycles per H-cycle
   H_layers: 1  # Ignored in TRM (uses L_level for both H and L)
   L_layers: 3  # Number of transformer layers in L-level
 
@@ -47,7 +46,7 @@ trm_config:
   # Halting configuration - SINGLE STEP
   halt_max_steps: 1
   halt_exploration_prob: 0.0
-  no_ACT_continue: true  # Simplified halting
+  no_ACT_continue: false  # Simplified halting (TRM-specific)
 
   # Chess-specific configuration (always enabled in TRM)
   square_feature_dim: 112
@@ -72,9 +71,6 @@ trm_config:
 
   # TRM-specific options
   mlp_t: false  # Use attention instead of MLP on sequence dimension
-
-  # Adapter configuration - larger bottleneck for more expressive combination
-  adapter_bottleneck_size: 128  # Larger bottleneck dimension
 
   # Data type
   forward_dtype: bfloat16

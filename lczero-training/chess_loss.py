@@ -7,7 +7,7 @@ class ChessLoss(nn.Module):
     """Combined loss function for chess training (adapted from tfprocess.py)"""
     
     def __init__(self, policy_weight: float = 1.0, value_weight: float = 1.0,
-                 moves_left_weight: float = 0.01, reg_weight: float = 5e-5, config=None):
+                 moves_left_weight: float = 0.01, reg_weight: float = 3e-5, config=None):
         super().__init__()
         self.policy_weight = policy_weight
         self.value_weight = value_weight

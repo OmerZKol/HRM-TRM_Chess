@@ -16,7 +16,6 @@ from model.SimpleChessNet import SimpleChessNet
 from model.ChessNNet import ChessNNet
 from model.ChessTRMNet import ChessTRMNet
 from model.ChessTRMBaselineNet import ChessTRMBaselineNet
-from model.ChessTRMAdapterNet import ChessTRMAdapterNet
 from model.transformer_chess_nn import TransformerChessNet
 from torch.utils.tensorboard import SummaryWriter
 from chess_dataset import ChessDataset
@@ -334,7 +333,7 @@ def load_model(args, config, device):
             print(f"Loading PyTorch model from {args.model_path}")
             checkpoint = torch.load(args.model_path, map_location=device)
 
-            if config.get("model_type") == 'simple':
+            if config.get("model_type") == 'CNN':
                 model = SimpleChessNet()
                 # Handle both direct state_dict and nested checkpoint format
                 if 'model_state_dict' in checkpoint:
@@ -363,13 +362,6 @@ def load_model(args, config, device):
                     print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
                 else:
                     model.load_state_dict(checkpoint)
-            elif config.get("model_type") == 'trm_adapter':
-                model = ChessTRMAdapterNet(config)
-                if 'model_state_dict' in checkpoint:
-                    model.load_state_dict(checkpoint['model_state_dict'])
-                    print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
-                else:
-                    model.load_state_dict(checkpoint)
             elif config.get("model_type") == 'transformer':
                 model = TransformerChessNet(config)
                 if 'model_state_dict' in checkpoint:
@@ -380,7 +372,7 @@ def load_model(args, config, device):
             else:
                 raise ValueError(f"Unknown model type when loading checkpoint: {config.get('model_type')}")
             return model.to(device)
-    if(config.get("model_type") == "simple"):
+    if(config.get("model_type") == "CNN"):
         return SimpleChessNet().to(device)
     if(config.get("model_type") == "hrm"):
         return ChessNNet(config).to(device)
@@ -388,8 +380,6 @@ def load_model(args, config, device):
         return ChessTRMNet(config).to(device)
     if(config.get("model_type") == "trm_baseline"):
         return ChessTRMBaselineNet(config).to(device)
-    if(config.get("model_type") == "trm_adapter"):
-        return ChessTRMAdapterNet(config).to(device)
     if(config.get("model_type") == "transformer"):
         return TransformerChessNet(config).to(device)
 
@@ -486,8 +476,7 @@ def main():
 
     # # Sample a specific number of random chunk files from the total available
     # #dataset used has nearly 20,000 chunk files, corresponding to ~2 million games
-    # #to speed up training during experimentation, a smaller subset of 5000 chunk files is used
-    # #coresponds to ~500,000 games
+    # #to speed up training during experimentation, a smaller subset of can be used
     num_chunks = 5
     # num_chunks = min(num_chunks, len(chunk_files))  # Don't exceed available files
     # random.seed(42) #set seed for reproducibility
@@ -508,14 +497,13 @@ def main():
     print(f"[Main] Validation dataset created successfully!")
 
     # Optimize data loading with multiple workers and pinned memory
-    # num_workers = config.get('num_workers', 16)  # Use 16 workers by default for parallel data loading
     num_workers = 16
     print(f"[Main] Creating DataLoaders with {num_workers} workers...")
-    train_dataloader = DataLoader(train_dataset, batch_size=config.get('batch_size', 128),
+    train_dataloader = DataLoader(train_dataset, batch_size=config.get('batch_size', 256),
                             shuffle=True, num_workers=num_workers, pin_memory=True,
                             persistent_workers=False,
                             prefetch_factor=4 if num_workers > 0 else None)
-    test_dataloader = DataLoader(valid_dataset, batch_size=config.get('batch_size', 128),
+    test_dataloader = DataLoader(valid_dataset, batch_size=config.get('batch_size', 256),
                             shuffle=False, num_workers=num_workers, pin_memory=True,
                             persistent_workers=False,
                             prefetch_factor=4 if num_workers > 0 else None)
@@ -536,9 +524,9 @@ def main():
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config.get('lr', 0.0001))
     print(f'Optimizer: Adam with lr={config.get("lr", 0.0001)}')
-    # Add learning rate scheduler - cosine annealing (smooth decay, no restarts)
-    #use T_max from config or default to 24 (realistic for early stopping)
-    t_max = config.get('scheduler_T_max', 24)
+    # Add learning rate scheduler - cosine annealing for a smooth decay
+    #use T_max from config or default to 24
+    t_max = config.get('scheduler_T_max', 20)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=t_max, eta_min=config.get('lr', 0.0001)/200
     )
@@ -550,7 +538,7 @@ def main():
     model_type = config.get('model_type')
     # trm_adapter uses trm_config, so map it accordingly
     config_key = 'trm_config' if model_type == 'trm_adapter' else f'{model_type}_config'
-    use_bfloat16 = (model_type in ['hrm', 'trm', 'trm_adapter'] and
+    use_bfloat16 = (model_type in ['hrm', 'trm', 'transformer'] and
                     config.get(config_key, {}).get('forward_dtype') == 'bfloat16')
     use_amp = config.get('use_amp', False) and device.type == 'cuda' and not use_bfloat16
     scaler = torch.cuda.amp.GradScaler() if use_amp else None
@@ -572,7 +560,7 @@ def main():
     print(f'TensorBoard logs will be saved to: {log_dir}')
 
     # Early stopping parameters (hardcoded)
-    early_stopping_patience = 3  # Stop if no improvement for 3 validation checks (set to None to disable)
+    early_stopping_patience = 2  # Stop if no improvement for 2 validation checks (set to None to disable)
     best_val_loss = float('inf')
     epochs_without_improvement = 0
 

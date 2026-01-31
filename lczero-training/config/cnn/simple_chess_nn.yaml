@@ -4,7 +4,7 @@
 # Training parameters
 batch_size: 512
 learning_rate: 0.0001
-epochs: 30
+epochs: 20
 
 name: "CNN"
 
@@ -19,7 +19,7 @@ value_loss_weight: 1.0
 moves_left_loss_weight: 0.01
 
 # Model architecture
-model_type: simple
+model_type: CNN
 input_channels: 112
 hidden_dim: 256
 policy_size: 1858

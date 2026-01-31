@@ -4,7 +4,7 @@
 # Training parameters
 batch_size: 512
 learning_rate: 0.0001
-epochs: 40
+epochs: 20
 
 name: "transformer"
 
@@ -13,7 +13,7 @@ sample_rate: 1  # Use all data (set to higher value for faster training with les
 
 # Training optimizations
 num_workers: 4  # Number of parallel data loading workers (0 = single-threaded)
-use_amp: true  # Use Automatic Mixed Precision training (faster on modern GPUs)
+use_amp: false  # Use Automatic Mixed Precision training (faster on modern GPUs)
 gradient_accumulation_steps: 1  # Accumulate gradients over N steps (effective_batch = batch_size * N)
 
 # Loss weights
@@ -53,6 +53,9 @@ transformer_config:
 
   # Normalization
   rms_norm_eps: 1.0e-5 # RMS normalization epsilon for numerical stability
+
+  # Data type
+  forward_dtype: bfloat16
 
 # Notes:
 # - hidden_size should be divisible by num_heads

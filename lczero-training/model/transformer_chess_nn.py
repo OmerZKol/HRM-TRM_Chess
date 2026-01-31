@@ -116,7 +116,7 @@ class TransformerBlock(nn.Module):
     Single transformer block with attention and feed-forward layers.
     """
     
-    def __init__(self, hidden_size, num_heads, expansion=4.0, rms_norm_eps=1e-5, use_flash_attn=True):
+    def __init__(self, hidden_size, num_heads, expansion=4.0, rms_norm_eps=1e-5):
         super().__init__()
         self.hidden_size = hidden_size
         self.num_heads = num_heads
@@ -245,8 +245,7 @@ class TransformerChessNet(nn.Module):
                 hidden_size=hidden_size,
                 num_heads=num_heads,
                 expansion=expansion,
-                rms_norm_eps=rms_norm_eps,
-                use_flash_attn=True  # Will fallback to standard attention on CPU
+                rms_norm_eps=rms_norm_eps
             )
             for _ in range(num_layers)
         ])
@@ -359,64 +358,3 @@ def count_parameters(model):
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     return total_params, trainable_params
-
-
-def test_transformer_chess_net():
-    """Test the transformer chess model."""
-    print("Testing Transformer Chess Model...")
-
-    # Model configuration
-    batch_size = 4
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # Create test config
-    config = {
-        'transformer_config': {
-            'square_feature_dim': 112,
-            'hidden_size': 512,
-            'num_layers': 6,
-            'num_heads': 8,
-            'expansion': 4.0,
-            'use_wdl': True
-        }
-    }
-
-    # Create model using config (matches training script interface)
-    model = TransformerChessNet(config, board_size=(8, 8)).to(device)
-
-    # Create test input (random board)
-    board_input = torch.randn(batch_size, 112, 8, 8).to(device)
-    print(f"Input shape: {board_input.shape}")
-    
-    # Forward pass
-    with torch.no_grad():
-        policy_logits, value_logits, moves_left, info_dict = model(board_input)
-    
-    # Check output shapes
-    print(f"Policy logits shape: {policy_logits.shape} (expected: [{batch_size}, 1858])")
-    print(f"Value logits shape: {value_logits.shape} (expected: [{batch_size}, 3])")
-    print(f"Moves left shape: {moves_left.shape} (expected: [{batch_size}, 1])")
-    
-    # Check additional info
-    print(f"Policy attention shape: {info_dict['policy_attention'].shape}")
-    print(f"Hidden states shape: {info_dict['hidden_states'].shape}")
-    
-    # Parameter count
-    total_params, trainable_params = count_parameters(model)
-    print(f"\nModel parameters:")
-    print(f"Total: {total_params:,}")
-    print(f"Trainable: {trainable_params:,}")
-    
-    # Check that outputs are reasonable
-    assert policy_logits.shape == (batch_size, 1858), f"Wrong policy shape: {policy_logits.shape}"
-    assert value_logits.shape == (batch_size, 3), f"Wrong value shape: {value_logits.shape}"
-    assert moves_left.shape == (batch_size, 1), f"Wrong moves shape: {moves_left.shape}"
-    assert torch.all(moves_left >= 0), "Moves left should be non-negative"
-    
-    print("\n✅ All tests passed! Transformer chess model is working correctly.")
-    
-    return model
-
-
-if __name__ == "__main__":
-    model = test_transformer_chess_net()
