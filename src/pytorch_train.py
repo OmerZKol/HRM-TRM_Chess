@@ -53,16 +53,6 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: ChessLoss,
             value_target = value_target.to(device)
             ml_target = ml_target.to(device)
 
-            # NaN detection: Check validation input data
-            if torch.isnan(planes).any():
-                print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in input planes")
-            if torch.isnan(policy_target).any():
-                print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in policy_target")
-            if torch.isnan(value_target).any():
-                print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in value_target")
-            if torch.isnan(ml_target).any():
-                print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in ml_target")
-
             # for HRM/TRM/TRM_baseline/TRM_adapter model, compute output with mixed precision for FlashAttention compatibility
             if(criterion.model_type == "hrm" or criterion.model_type == "trm" or criterion.model_type == "trm_baseline" or criterion.model_type == "trm_adapter"):
                 with torch.autocast(device_type=device.type, dtype=torch.float16):
@@ -72,28 +62,11 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: ChessLoss,
 
             policy_output, value_output, moves_left_output, q_output = model_output
 
-            # NaN detection: Check validation model outputs
-            if torch.isnan(policy_output).any():
-                print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in policy_output")
-                raise RuntimeError(f"NaN detected in validation policy_output at batch {batch_idx}. Stopping training.")
-            if torch.isnan(value_output).any():
-                print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in value_output")
-                raise RuntimeError(f"NaN detected in validation value_output at batch {batch_idx}. Stopping training.")
-            if torch.isnan(moves_left_output).any():
-                print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in moves_left_output")
-                raise RuntimeError(f"NaN detected in validation moves_left_output at batch {batch_idx}. Stopping training.")
-
             # Calculate loss
             total_loss, loss_dict = criterion(policy_target, policy_output,
                                   value_target, value_output,
                                   ml_target, moves_left_output,
                                   q_output, model)
-
-            # NaN detection: Check validation loss
-            if torch.isnan(total_loss):
-                print(f"[NaN Detection - Validation] Batch {batch_idx}: NaN in total_loss")
-                print(f"  Loss components: {loss_dict}")
-                raise RuntimeError(f"NaN detected in validation total_loss at batch {batch_idx}. Stopping training.")
 
             # Track recursion steps if available (HRM/TRM models)
             if "recursion_steps" in q_output:
@@ -146,33 +119,12 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
         value_target = value_target.to(device, non_blocking=True)
         ml_target = ml_target.to(device, non_blocking=True)
 
-        # NaN detection: Check input data
-        if torch.isnan(planes).any():
-            print(f"[NaN Detection] Batch {batch_idx}: NaN detected in input planes")
-        if torch.isnan(policy_target).any():
-            print(f"[NaN Detection] Batch {batch_idx}: NaN detected in policy_target")
-        if torch.isnan(value_target).any():
-            print(f"[NaN Detection] Batch {batch_idx}: NaN detected in value_target")
-        if torch.isnan(ml_target).any():
-            print(f"[NaN Detection] Batch {batch_idx}: NaN detected in ml_target")
-
         # Forward pass with automatic mixed precision
         use_amp = scaler is not None
         if use_amp:
             with torch.autocast(device_type=device.type, dtype=torch.float16):
                 model_output = model(planes)
                 policy_output, value_output, moves_left_output, q_output = model_output
-
-                # NaN detection: Check model outputs
-                if torch.isnan(policy_output).any():
-                    print(f"[NaN Detection] Batch {batch_idx}: NaN detected in policy_output (after forward)")
-                    raise RuntimeError(f"NaN detected in policy_output at batch {batch_idx}. Stopping training.")
-                if torch.isnan(value_output).any():
-                    print(f"[NaN Detection] Batch {batch_idx}: NaN detected in value_output (after forward)")
-                    raise RuntimeError(f"NaN detected in value_output at batch {batch_idx}. Stopping training.")
-                if torch.isnan(moves_left_output).any():
-                    print(f"[NaN Detection] Batch {batch_idx}: NaN detected in moves_left_output (after forward)")
-                    raise RuntimeError(f"NaN detected in moves_left_output at batch {batch_idx}. Stopping training.")
 
                 # Calculate loss
                 total_loss, loss_dict = criterion(policy_target, policy_output,
@@ -188,24 +140,6 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
                     model_output = model(planes)
                     policy_output, value_output, moves_left_output, q_output = model_output
 
-                    # NaN detection: Check model outputs
-                    if torch.isnan(policy_output).any():
-                        print(f"[NaN Detection] Batch {batch_idx}: NaN detected in policy_output (after forward)")
-                        print(f"Policy output stats: min={policy_output.min().item():.4f}, max={policy_output.max().item():.4f}, mean={policy_output.mean().item():.4f}")
-                        print(f"Number of NaN values: {torch.isnan(policy_output).sum().item()}")
-                        print(f"Number of Inf values: {torch.isinf(policy_output).sum().item()}")
-                        # Check individual positions in batch
-                        for i in range(min(3, policy_output.shape[0])):
-                            if torch.isnan(policy_output[i]).any():
-                                print(f"  Batch item {i} has NaN. Stats: min={policy_output[i].min().item():.4f}, max={policy_output[i].max().item():.4f}")
-                        raise RuntimeError(f"NaN detected in policy_output at batch {batch_idx}. Stopping training.")
-                    if torch.isnan(value_output).any():
-                        print(f"[NaN Detection] Batch {batch_idx}: NaN detected in value_output (after forward)")
-                        raise RuntimeError(f"NaN detected in value_output at batch {batch_idx}. Stopping training.")
-                    if torch.isnan(moves_left_output).any():
-                        print(f"[NaN Detection] Batch {batch_idx}: NaN detected in moves_left_output (after forward)")
-                        raise RuntimeError(f"NaN detected in moves_left_output at batch {batch_idx}. Stopping training.")
-
                     # Calculate loss inside autocast context
                     total_loss, loss_dict = criterion(policy_target, policy_output,
                                               value_target, value_output,
@@ -215,20 +149,6 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
                 model_output = model(planes)
                 policy_output, value_output, moves_left_output, q_output = model_output
 
-                # NaN detection: Check model outputs
-                if torch.isnan(policy_output).any():
-                    print(f"[NaN Detection] Batch {batch_idx}: NaN detected in policy_output (after forward)")
-                    print(policy_output)
-                    print(value_output)
-                    print(moves_left_output)
-                    raise RuntimeError(f"NaN detected in policy_output at batch {batch_idx}. Stopping training.")
-                if torch.isnan(value_output).any():
-                    print(f"[NaN Detection] Batch {batch_idx}: NaN detected in value_output (after forward)")
-                    raise RuntimeError(f"NaN detected in value_output at batch {batch_idx}. Stopping training.")
-                if torch.isnan(moves_left_output).any():
-                    print(f"[NaN Detection] Batch {batch_idx}: NaN detected in moves_left_output (after forward)")
-                    raise RuntimeError(f"NaN detected in moves_left_output at batch {batch_idx}. Stopping training.")
-
                 # Calculate loss
                 total_loss, loss_dict = criterion(policy_target, policy_output,
                                           value_target, value_output,
@@ -237,34 +157,11 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
             # Scale loss for gradient accumulation
             total_loss = total_loss / gradient_accumulation_steps
 
-        # NaN detection: Check loss
-        if torch.isnan(total_loss):
-            print(f"[NaN Detection] Batch {batch_idx}: NaN detected in total_loss")
-            print(f"  Loss components: {loss_dict}")
-            # Check individual loss components
-            for key, value in loss_dict.items():
-                if isinstance(value, float) and (value != value):  # NaN check for float
-                    print(f"  - {key} is NaN")
-            raise RuntimeError(f"NaN detected in total_loss at batch {batch_idx}. Stopping training.")
-
         # Backward pass
         if use_amp:
             scaler.scale(total_loss).backward()
         else:
             total_loss.backward()
-
-        # NaN detection: Check gradients
-        nan_grads = []
-        for name, param in model.named_parameters():
-            if param.grad is not None and torch.isnan(param.grad).any():
-                nan_grads.append(name)
-        if nan_grads:
-            print(f"[NaN Detection] Batch {batch_idx}: NaN detected in gradients:")
-            for name in nan_grads[:5]:  # Show first 5 to avoid spam
-                print(f"  - {name}")
-            if len(nan_grads) > 5:
-                print(f"  ... and {len(nan_grads) - 5} more parameters")
-            raise RuntimeError(f"NaN detected in gradients at batch {batch_idx}. Stopping training.")
 
         # Optimizer step with gradient accumulation
         if (batch_idx + 1) % gradient_accumulation_steps == 0:
@@ -279,19 +176,6 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip_max_norm)
                 optimizer.step()
             optimizer.zero_grad()
-
-            # NaN detection: Check model parameters after optimizer step
-            nan_params = []
-            for name, param in model.named_parameters():
-                if torch.isnan(param).any():
-                    nan_params.append(name)
-            if nan_params:
-                print(f"[NaN Detection] Batch {batch_idx}: NaN detected in model parameters after optimizer step:")
-                for name in nan_params[:5]:
-                    print(f"  - {name}")
-                if len(nan_params) > 5:
-                    print(f"  ... and {len(nan_params) - 5} more parameters")
-                raise RuntimeError(f"NaN detected in model parameters at batch {batch_idx}. Stopping training.")
 
         # Track recursion steps if available (HRM/TRM models)
         if "recursion_steps" in q_output:
@@ -448,11 +332,6 @@ def main():
     # Set device - require CUDA for training
     if args.device == 'cuda' and not torch.cuda.is_available():
         print("\nERROR: CUDA requested but not available!")
-        print("Training requires a GPU. Please check:")
-        print("  1. GPU is properly installed")
-        print("  2. CUDA drivers are installed")
-        print("  3. PyTorch was installed with CUDA support")
-        print(f"  4. Run 'nvidia-smi' to verify GPU availability")
         sys.exit(1)
 
     device = torch.device(args.device)
@@ -473,18 +352,6 @@ def main():
     if not chunk_files:
         print("No chunk files found! Make sure the data path is correct.")
         return
-
-    # # Sample a specific number of random chunk files from the total available
-    # #dataset used has nearly 20,000 chunk files, corresponding to ~2 million games
-    # #to speed up training during experimentation, a smaller subset of can be used
-    num_chunks = 5
-    # num_chunks = min(num_chunks, len(chunk_files))  # Don't exceed available files
-    # random.seed(42) #set seed for reproducibility
-    # chunk_files = random.sample(chunk_files, num_chunks)
-    # random.seed()  # Reset seed for other random operations
-
-
-    # chunk_files = chunk_files[:10]
 
     train_split = int(0.9 * len(chunk_files)) # 90% for training, 10% for validation
 
