@@ -18,7 +18,6 @@ __pycache__/
 # C extensions
 *.so
 model_checkpoints/
-runs/
 # Downloaded lczero training data - adjust paths as needed
 lczero-training/data/training-run1--20250209-1017/
 lczero-training/data/training-run3--20210605-0521/
@@ -187,17 +186,15 @@ cython_debug/
 lczero-training/visualize_parameters.py
 lczero-training/parameter_tracker.py
 
-runs2
-runs3
-runs4
-runs5
-runs7
-runs11
 notes.md
 lczero-training/model/MIGRATION_SUMMARY.md
 lczero-training/model/README.md
 runs.zip:Zone.Identifier
 lczero-training/training_logs.zip
-lczero-training/training_logs.zip:Zone.Identifier
 extra/
 archived/
+runs.zip
+plot_training_logs.py
+runs12
+data/
+figures/
