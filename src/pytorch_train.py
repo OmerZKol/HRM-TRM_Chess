@@ -377,7 +377,7 @@ def main():
     print(f'Gradient clipping max_norm: {grad_clip_max_norm}')
 
     # Initialize TensorBoard writer
-    log_dir = f"runs/{config.get('name')}"
+    log_dir = f"logs/{config.get('name')}"
     writer = SummaryWriter(log_dir=log_dir)
     print(f'TensorBoard logs will be saved to: {log_dir}')
 

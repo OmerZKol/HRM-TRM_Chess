@@ -10,10 +10,10 @@ Hierarchical Reasoning Model (HRM) and Tiny Recursive Model (TRM) adapted for ch
 
 ![Validation metrics for TRM and Transformer models](src/plots/overview_validation_trm_+_transformer_models.png)
 
-More detailed training results are available in the `src/runs/` directory.
+More detailed training results are available in the `src/logs/` directory.
 ```bash
 pip install tensorboard
-tensorboard --logdir src/runs/
+tensorboard --logdir src/logs/
 ```
 
 ## Quick Start
@@ -45,7 +45,7 @@ python pytorch_train.py --config config/hrm/hrm_halt1_single_cycle.yaml --data-p
 python batch_train.py --config-dir config/ --data-path data/training-run1--20250209-1017
 
 # View training logs
-tensorboard --logdir runs/
+tensorboard --logdir logs/
 ```
 
 ## Model Architectures
