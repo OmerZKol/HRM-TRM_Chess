@@ -23,9 +23,6 @@ moves_left_loss_weight: 0.01
 
 # Model architecture
 model_type: hrm
-board_x: 8
-board_y: 8
-action_size: 1858
 
 # HRM specific parameters
 hrm_config:
@@ -40,8 +37,7 @@ hrm_config:
   hidden_size: 256
   expansion: 2.0
   num_heads: 8
-  action_size: 1858
-  
+
   # Positional encodings
   pos_encodings: rope
   rope_theta: 10000.0
@@ -60,6 +56,10 @@ hrm_config:
   move_prediction_from_token: 0
   value_prediction_from_token: 0
   moves_left_from_token: 0
+
+  # Positional encoding style
+  arc_encoding: true  # concat pos_enc with features
+  pos_enc_dim: 16
 
   # TensorFlow-style heads for spatial processing
   use_tensorflow_style_heads: true

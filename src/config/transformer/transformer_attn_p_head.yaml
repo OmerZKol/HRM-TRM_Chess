@@ -36,7 +36,7 @@ transformer_config:
   expansion: 2.0       # FFN expansion factor (FFN_dim = hidden_size * expansion) - configurable!
 
   # Input embedding style (TRM-style arc_encoding)
-  arc_encoding: true   # Use TensorFlow/TRM style concatenative positional encoding
+  arc_encoding: true   # concat pos_enc with features
   pos_enc_dim: 16      # Positional encoding dimension (only used if arc_encoding=true)
 
   # Positional encodings

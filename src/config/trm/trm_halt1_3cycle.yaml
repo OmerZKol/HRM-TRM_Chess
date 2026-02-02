@@ -60,7 +60,7 @@ trm_config:
   moves_left_from_token: 0
 
   # Positional encoding style
-  arc_encoding: true  # tfprocess.py style (concat pos_enc with features)
+  arc_encoding: true  # concat pos_enc with features
   pos_enc_dim: 16
 
   # Head architecture
