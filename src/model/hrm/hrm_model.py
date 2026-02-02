@@ -1,17 +1,15 @@
-from typing import Tuple, List, Dict, Optional
+from typing import Tuple, List, Dict
 from dataclasses import dataclass
 import math
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 from pydantic import BaseModel
 
 from model.common.initialization import trunc_normal_init_
-from model.common.layers import rms_norm, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedEmbedding, CastedLinear
-from model.common.sparse_embedding import CastedSparseEmbedding
+from model.common.layers import rms_norm, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedLinear
 from model.heads.attention_policy import AttentionPolicyHead
-from model.heads.value_heads import TensorFlowStyleValueHead, TensorFlowStyleMovesLeftHead
+from model.heads.value_heads import ValueHead, MovesLeftHead
 from model.common.gating import Gating, ma_gating
 
 @dataclass
@@ -155,8 +153,8 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         # Value prediction head
         if self.config.use_value_prediction:
             if self.config.use_tensorflow_style_heads:
-                # Use TensorFlow-style value head that processes all spatial information
-                self.value_head = TensorFlowStyleValueHead(
+                # Use value head that processes all spatial information
+                self.value_head = ValueHead(
                     hidden_size=self.config.hidden_size,
                     embedding_size=self.config.value_embedding_size,
                     use_wdl=True
@@ -170,12 +168,12 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
                     self.value_head.weight.normal_(0, 0.1)
                     if self.value_head.bias is not None:
                         self.value_head.bias.zero_()
-        
+
         # Moves left prediction head
         if self.config.use_moves_left_prediction:
             if self.config.use_tensorflow_style_heads:
-                # Use TensorFlow-style moves left head that processes all spatial information
-                self.moves_left_head = TensorFlowStyleMovesLeftHead(
+                # Use moves left head that processes all spatial information
+                self.moves_left_head = MovesLeftHead(
                     hidden_size=self.config.hidden_size,
                     embedding_size=self.config.moves_embedding_size
                 )

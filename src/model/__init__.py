@@ -13,16 +13,8 @@ Main Models:
 Usage Example:
 -------------
 ```python
-from model.hrm import HierarchicalReasoningModel_ACTV1
-from model.bridge import AlphaZeroBridge
-
-# Create and wrap model
-hrm_model = HierarchicalReasoningModel_ACTV1(config_dict)
-model = AlphaZeroBridge(hrm_model)
-
-# Or use the convenient wrappers:
-from model.ChessNNet import ChessNNet
-model = ChessNNet(config)
+from model.ChessModelWrapper import ChessModelWrapper
+model = ChessModelWrapper(config)  # config['model_type'] determines which model
 ```
 
 Directory Structure:
@@ -31,8 +23,8 @@ Directory Structure:
 - hrm/: Hierarchical Reasoning Model implementations
 - trm/: Tiny Recursive Model implementations
 - heads/: Output head implementations (policy, value, moves left)
-- bridge.py: AlphaZero training adapter
-- ChessNNet.py, ChessTRMNet.py, ChessTRMBaselineNet.py: Training wrappers
+- bridge.py: training adapter
+- ChessModelWrapper.py: Unified training wrapper
 """
 
 # Common utilities
@@ -64,15 +56,13 @@ from model.trm import (
 
 # Output heads
 from model.heads.attention_policy import AttentionPolicyHead
-from model.heads.value_heads import TensorFlowStyleValueHead, TensorFlowStyleMovesLeftHead
+from model.heads.value_heads import ValueHead, MovesLeftHead
 
 # Bridge
 from model.bridge import AlphaZeroBridge
 
-# Training wrappers (for backward compatibility)
-from model.ChessNNet import ChessNNet
-from model.ChessTRMNet import ChessTRMNet
-from model.ChessTRMBaselineNet import ChessTRMBaselineNet
+# Unified wrapper
+from model.ChessModelWrapper import ChessModelWrapper
 
 __all__ = [
     # Common
@@ -95,15 +85,10 @@ __all__ = [
     "TinyRecursiveReasoningModel_ACTV1Config",
     # Heads
     "AttentionPolicyHead",
-    "TensorFlowStyleValueHead",
-    "TensorFlowStyleMovesLeftHead",
+    "ValueHead",
+    "MovesLeftHead",
     # Bridge
     "AlphaZeroBridge",
-    # Wrappers
-    "ChessNNet",
-    "ChessTRMNet",
-    "ChessTRMBaselineNet",
+    # Wrapper
+    "ChessModelWrapper",
 ]
-
-__version__ = "2.0.0"
-__author__ = "Chess AI Research Team"

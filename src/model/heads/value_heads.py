@@ -1,5 +1,5 @@
 """
-TensorFlow-style value and moves left heads for HRM model.
+Value, moves left, and policy heads for chess models.
 Based on the tfprocess.py implementation from Leela Chess Zero.
 """
 
@@ -9,9 +9,9 @@ import torch.nn.functional as F
 from model.common.layers import CastedLinear
 
 
-class TensorFlowStyleValueHead(nn.Module):
+class ValueHead(nn.Module):
     """
-    Value head following TensorFlow Lc0 implementation.
+    Value head based on Lc0 implementation.
     Uses all spatial information instead of just first token.
     """
     
@@ -73,9 +73,9 @@ class TensorFlowStyleValueHead(nn.Module):
         return value_logits
 
 
-class TensorFlowStyleMovesLeftHead(nn.Module):
+class MovesLeftHead(nn.Module):
     """
-    Moves left head following TensorFlow Lc0 implementation.
+    Moves left head based on Lc0 implementation.
     Uses all spatial information and ensures positive predictions.
     """
     
@@ -130,9 +130,9 @@ class TensorFlowStyleMovesLeftHead(nn.Module):
         return moves_left
 
 
-class TensorFlowStylePolicyHead(nn.Module):
+class LinearPolicyHead(nn.Module):
     """
-    Policy head following TensorFlow Lc0 style.
+    Linear policy head based on Lc0 style.
     Uses all spatial information instead of just first token.
     """
 
@@ -188,22 +188,22 @@ class TensorFlowStylePolicyHead(nn.Module):
         return policy_logits
 
 
-class CombinedTensorFlowStyleHeads(nn.Module):
+class CombinedHeads(nn.Module):
     """
     Combined value and moves left heads for efficient processing.
     Shares the initial spatial processing before branching.
     """
-    
+
     def __init__(self, hidden_size, value_embedding_size=32, moves_embedding_size=8, use_wdl=True):
         super().__init__()
-        
-        self.value_head = TensorFlowStyleValueHead(
+
+        self.value_head = ValueHead(
             hidden_size=hidden_size,
             embedding_size=value_embedding_size,
             use_wdl=use_wdl
         )
-        
-        self.moves_left_head = TensorFlowStyleMovesLeftHead(
+
+        self.moves_left_head = MovesLeftHead(
             hidden_size=hidden_size,
             embedding_size=moves_embedding_size
         )
@@ -222,54 +222,3 @@ class CombinedTensorFlowStyleHeads(nn.Module):
         moves_left_logits = self.moves_left_head(hidden_states)
         
         return value_logits, moves_left_logits
-
-
-def test_tensorflow_style_heads():
-    """Test the TensorFlow-style head implementations."""
-    print("Testing TensorFlow-style Value and Moves Left Heads...")
-    
-    # Test parameters
-    batch_size, seq_len, hidden_size = 4, 64, 256
-    
-    # Create test input
-    hidden_states = torch.randn(batch_size, seq_len, hidden_size)
-    print(f"Input shape: {hidden_states.shape}")
-    
-    # Test Value Head
-    print("\n1. Testing Value Head...")
-    value_head = TensorFlowStyleValueHead(hidden_size, embedding_size=32, use_wdl=True)
-    value_logits = value_head(hidden_states)
-    print(f"Value output shape: {value_logits.shape} (expected: [{batch_size}, 3])")
-    assert value_logits.shape == (batch_size, 3), f"Wrong value shape: {value_logits.shape}"
-    
-    # Test Moves Left Head
-    print("\n2. Testing Moves Left Head...")
-    moves_head = TensorFlowStyleMovesLeftHead(hidden_size, embedding_size=8)
-    moves_logits = moves_head(hidden_states)
-    print(f"Moves left output shape: {moves_logits.shape} (expected: [{batch_size}, 1])")
-    assert moves_logits.shape == (batch_size, 1), f"Wrong moves shape: {moves_logits.shape}"
-    
-    # Test that moves left are positive (ReLU constraint)
-    print(f"Moves left values: {moves_logits.squeeze()}")
-    assert torch.all(moves_logits >= 0), "Moves left should be non-negative!"
-    
-    # Test Combined Heads
-    print("\n3. Testing Combined Heads...")
-    combined_heads = CombinedTensorFlowStyleHeads(hidden_size)
-    value_out, moves_out = combined_heads(hidden_states)
-    print(f"Combined value shape: {value_out.shape}")
-    print(f"Combined moves shape: {moves_out.shape}")
-    
-    # Test parameter count
-    value_params = sum(p.numel() for p in value_head.parameters())
-    moves_params = sum(p.numel() for p in moves_head.parameters())
-    print(f"\nParameter counts:")
-    print(f"Value head: {value_params:,} parameters")
-    print(f"Moves left head: {moves_params:,} parameters")
-    print(f"Total: {value_params + moves_params:,} parameters")
-    
-    print("\n✅ All tests passed! TensorFlow-style heads are working correctly.")
-
-
-if __name__ == "__main__":
-    test_tensorflow_style_heads()

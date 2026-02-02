@@ -12,11 +12,7 @@ import sys
 import logging
 from datetime import datetime
 from chess_loss import ChessLoss
-from model.SimpleChessNet import SimpleChessNet
-from model.ChessNNet import ChessNNet
-from model.ChessTRMNet import ChessTRMNet
-from model.ChessTRMBaselineNet import ChessTRMBaselineNet
-from model.transformer_chess_nn import TransformerChessNet
+from model.ChessModelWrapper import ChessModelWrapper
 from torch.utils.tensorboard import SummaryWriter
 from chess_dataset import ChessDataset
 
@@ -209,63 +205,22 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, criterion,
     return total_losses
 
 def load_model(args, config, device):
-    """Load model based on command line arguments"""
-    
-    # If model path is provided, try to load it
-    if args.model_path:
-        if args.model_path.endswith('.pth'):
-            print(f"Loading PyTorch model from {args.model_path}")
-            checkpoint = torch.load(args.model_path, map_location=device)
+    """Load model based on config['model_type'] using unified wrapper."""
+    model = ChessModelWrapper(config)
 
-            if config.get("model_type") == 'CNN':
-                model = SimpleChessNet()
-                # Handle both direct state_dict and nested checkpoint format
-                if 'model_state_dict' in checkpoint:
-                    model.load_state_dict(checkpoint['model_state_dict'])
-                    print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
-                else:
-                    model.load_state_dict(checkpoint)
-            elif config.get("model_type") == 'hrm':
-                model = ChessNNet(config)
-                if 'model_state_dict' in checkpoint:
-                    model.load_state_dict(checkpoint['model_state_dict'])
-                    print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
-                else:
-                    model.load_state_dict(checkpoint)
-            elif config.get("model_type") == 'trm':
-                model = ChessTRMNet(config)
-                if 'model_state_dict' in checkpoint:
-                    model.load_state_dict(checkpoint['model_state_dict'])
-                    print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
-                else:
-                    model.load_state_dict(checkpoint)
-            elif config.get("model_type") == 'trm_baseline':
-                model = ChessTRMBaselineNet(config)
-                if 'model_state_dict' in checkpoint:
-                    model.load_state_dict(checkpoint['model_state_dict'])
-                    print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
-                else:
-                    model.load_state_dict(checkpoint)
-            elif config.get("model_type") == 'transformer':
-                model = TransformerChessNet(config)
-                if 'model_state_dict' in checkpoint:
-                    model.load_state_dict(checkpoint['model_state_dict'])
-                    print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
-                else:
-                    model.load_state_dict(checkpoint)
-            else:
-                raise ValueError(f"Unknown model type when loading checkpoint: {config.get('model_type')}")
-            return model.to(device)
-    if(config.get("model_type") == "CNN"):
-        return SimpleChessNet().to(device)
-    if(config.get("model_type") == "hrm"):
-        return ChessNNet(config).to(device)
-    if(config.get("model_type") == "trm"):
-        return ChessTRMNet(config).to(device)
-    if(config.get("model_type") == "trm_baseline"):
-        return ChessTRMBaselineNet(config).to(device)
-    if(config.get("model_type") == "transformer"):
-        return TransformerChessNet(config).to(device)
+    # If model path is provided, load checkpoint weights
+    if args.model_path and args.model_path.endswith('.pth'):
+        print(f"Loading PyTorch model from {args.model_path}")
+        checkpoint = torch.load(args.model_path, map_location=device)
+
+        # Handle both direct state_dict and nested checkpoint format
+        if 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+            print(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
+        else:
+            model.load_state_dict(checkpoint)
+
+    return model.to(device)
 
 def save_model(model, optimizer, scheduler, config, args, epoch, losses):
     """Save model with training info"""

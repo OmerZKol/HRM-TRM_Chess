@@ -1,26 +1,24 @@
-from typing import Tuple, List, Dict, Optional
+from typing import Tuple, List, Dict
 from dataclasses import dataclass
 
 import torch
 import copy
-import torch.nn.functional as F
 from torch import nn
 from pydantic import BaseModel
 import random
 from model.common.initialization import trunc_normal_init_
-from model.common.layers import rms_norm, LinearSwish, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedEmbedding, CastedLinear
-from model.common.sparse_embedding import CastedSparseEmbedding
+from model.common.layers import rms_norm, LinearSwish, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedLinear
 from model.common.gating import Gating, ma_gating
 
 # Chess-specific imports (optional, only used when chess features enabled)
 try:
     from model.heads.attention_policy import AttentionPolicyHead
-    from model.heads.value_heads import TensorFlowStyleValueHead, TensorFlowStyleMovesLeftHead, TensorFlowStylePolicyHead
+    from model.heads.value_heads import ValueHead, MovesLeftHead, LinearPolicyHead
 except ImportError:
     AttentionPolicyHead = None
-    TensorFlowStyleValueHead = None
-    TensorFlowStyleMovesLeftHead = None
-    TensorFlowStylePolicyHead = None
+    ValueHead = None
+    MovesLeftHead = None
+    LinearPolicyHead = None
 
 @dataclass
 class TinyRecursiveReasoningModel_ACTV1InnerCarry:
@@ -234,10 +232,10 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
                     raise ImportError("AttentionPolicyHead not available. Check imports.")
                 self.move_head = AttentionPolicyHead(self.config.hidden_size, self.config.num_heads)
             else:
-                # Use TensorFlow-style policy head that processes all spatial information
-                if TensorFlowStylePolicyHead is None:
-                    raise ImportError("TensorFlowStylePolicyHead not available. Check imports.")
-                self.move_head = TensorFlowStylePolicyHead(
+                # Use linear policy head that processes all spatial information
+                if LinearPolicyHead is None:
+                    raise ImportError("LinearPolicyHead not available. Check imports.")
+                self.move_head = LinearPolicyHead(
                     hidden_size=self.config.hidden_size,
                     num_actions=self.config.num_actions,
                     embedding_size=32
@@ -246,10 +244,10 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         # Value prediction head
         if self.config.use_value_prediction:
             if self.config.use_tensorflow_style_heads:
-                # Use TensorFlow-style value head that processes all spatial information
-                if TensorFlowStyleValueHead is None:
-                    raise ImportError("TensorFlowStyleValueHead not available. Check imports.")
-                self.value_head = TensorFlowStyleValueHead(
+                # Use value head that processes all spatial information
+                if ValueHead is None:
+                    raise ImportError("ValueHead not available. Check imports.")
+                self.value_head = ValueHead(
                     hidden_size=self.config.hidden_size,
                     embedding_size=self.config.value_embedding_size,
                     use_wdl=True
@@ -267,10 +265,10 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         # Moves left prediction head
         if self.config.use_moves_left_prediction:
             if self.config.use_tensorflow_style_heads:
-                # Use TensorFlow-style moves left head that processes all spatial information
-                if TensorFlowStyleMovesLeftHead is None:
-                    raise ImportError("TensorFlowStyleMovesLeftHead not available. Check imports.")
-                self.moves_left_head = TensorFlowStyleMovesLeftHead(
+                # Use moves left head that processes all spatial information
+                if MovesLeftHead is None:
+                    raise ImportError("MovesLeftHead not available. Check imports.")
+                self.moves_left_head = MovesLeftHead(
                     hidden_size=self.config.hidden_size,
                     embedding_size=self.config.moves_embedding_size
                 )

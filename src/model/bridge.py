@@ -6,21 +6,16 @@ Adapts AlphaZero (board, pi, v) training data to model's expected format.
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from typing import Dict, Tuple
-import numpy as np
-
 
 class AlphaZeroBridge(nn.Module):
     """
-    Wrapper that makes HRM/TRM models work with AlphaZero training data.
-    Converts (board, pi, v) format to the model's expected batch format.
+    Wrapper for HRM/TRM models, mainly for the ACT recursive feature.
     """
 
     def __init__(self, model):
         super().__init__()
         self.model = model
-        # New chess format: (112, 8, 8)
+        # Data format: (112, 8, 8)
 
     def forward(self, boards):
         """
@@ -61,7 +56,7 @@ class AlphaZeroBridge(nn.Module):
 
         # Safety limit: halt_max_steps + 1 for initial halted state + 1 extra for safety
         max_iterations = self.model.config.halt_max_steps + 2
-        for iteration in range(max_iterations):
+        for _ in range(max_iterations):
             carry, outputs = self.model(carry, batch)
             # Mark sequences that have halted (but haven't halted in previous iterations due to reset)
             # A sequence completes when it reaches a halted state

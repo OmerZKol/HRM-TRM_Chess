@@ -1,6 +1,6 @@
 """
 Transformer-based chess model that accepts board input and returns action, policy, and moves left heads.
-Uses implementations from the HRM_Chess/lczero-training/model directory to avoid redundant code.
+Uses implementations from the HRM_Chess/src/model directory to avoid redundant code.
 """
 
 import torch
@@ -11,7 +11,7 @@ from model.common.layers import (
     Attention, SwiGLU, RotaryEmbedding, CastedLinear, CastedEmbedding, rms_norm
 )
 from model.heads.attention_policy import AttentionPolicyHead
-from model.heads.value_heads import CombinedTensorFlowStyleHeads
+from model.heads.value_heads import CombinedHeads
 
 
 class ChessBoardEmbedding(nn.Module):
@@ -276,7 +276,7 @@ class TransformerChessNet(nn.Module):
                     self.policy_head.bias.zero_()
 
         # Value and moves left heads
-        self.value_moves_heads = CombinedTensorFlowStyleHeads(
+        self.value_moves_heads = CombinedHeads(
             hidden_size=hidden_size,
             value_embedding_size=value_embedding_size,
             moves_embedding_size=moves_embedding_size,
