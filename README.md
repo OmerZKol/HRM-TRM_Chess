@@ -1,6 +1,6 @@
 # HRM/TRM Chess
 
-Hierarchical Reasoning Model (HRM) and Tiny Recursive Model (TRM) adapted for chess. Trains models on Leela Chess Zero (LC0) format training data to predict moves, board evaluation, and moves left in the game. Overall, neither the inclusion of the hierarchical reasoning nor the recursive refinement structure yielded improvements over a transformer baseline in the experiments.
+[Hierarchical Reasoning Model (HRM)](https://arxiv.org/abs/2506.21734) and [Tiny Recursive Model (TRM)](https://arxiv.org/abs/2510.04871) adapted for chess. Trains models on Leela Chess Zero (LC0) format training data to predict moves, board evaluation, and moves left in the game. Overall, neither the inclusion of the hierarchical reasoning nor the recursive refinement structure yielded improvements over a transformer baseline in the experiments.
 
 ## Training Results
 
